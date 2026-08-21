@@ -462,14 +462,20 @@ def split_csv(value: str | None) -> list[str]:
 
 
 def parse_evidence(items: list[str]) -> list[dict]:
-    """'github_pr:#1234' or 'metric:API latency:800ms -> 300ms'."""
+    """'github_pr:#1234', 'github_pr:https://...' or 'metric:latency:800ms -> 300ms'."""
     parsed = []
     for item in items:
-        bits = item.split(":", 2)
-        kind = bits[0].strip()
-        record = {"type": kind, "reference": bits[1].strip() if len(bits) > 1 else ""}
-        if len(bits) > 2 and bits[2].strip():
-            record["value"] = bits[2].strip()
+        kind, _, rest = item.partition(":")
+        kind = kind.strip()
+        rest = rest.strip()
+        if re.match(r"^https?://", rest):
+            # A URL is one reference, not a reference plus a value.
+            record = {"type": kind, "reference": rest}
+        else:
+            reference, _, value = rest.partition(":")
+            record = {"type": kind, "reference": reference.strip()}
+            if value.strip():
+                record["value"] = value.strip()
         if kind not in EVIDENCE_TYPES:
             print(
                 f"warning: evidence type {kind!r} is outside the known list "
