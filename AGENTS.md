@@ -11,17 +11,24 @@ skills/career-memory/
 │   ├── entry-schema.md   entry format, types, evidence types, confidence
 │   ├── capture.md        what to record, candidates, duplicates, examples
 │   ├── daily.md          standup mode
+│   ├── github.md         discovery, import as candidates, evidence linking
 │   └── outputs.md        brag, review, promotion, resume, interview
 ├── templates/        starting points for generated documents
 └── scripts/
-    └── career_memory.py  the store: create, update, search, validate
+    ├── career_memory.py  the store: create, update, search, validate
+    └── career_github.py  read-only GitHub discovery (gh CLI or a token)
 ```
 
 The skill is agent-agnostic by design: Markdown instructions plus one
 standard-library Python script. Nothing depends on a particular provider, and
 the user's data is plain Markdown in a directory they own.
 
+`tests/test_cli.sh` covers both scripts; GitHub discovery is exercised offline
+through `tests/fake-gh.sh`, which answers from `tests/fixtures/github/`.
+
 If you are working *on* this repository rather than using the skill: the
 non-negotiable property is that the skill never fabricates career evidence.
 Any change that makes it easier for the agent to state something the user did
-not is a regression, however good the output looks.
+not is a regression, however good the output looks. Two corollaries in the
+GitHub code: discovered signals are written as candidates and nothing else, and
+GitHub metadata is never read as impact.

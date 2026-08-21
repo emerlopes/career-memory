@@ -89,6 +89,10 @@ on a likely match, printing what it found. Read the match before overriding:
 Updating beats duplicating: one entry that accumulates evidence over time is
 stronger than three thin ones saying nearly the same thing.
 
+The same rule applies to work found on GitHub: when `github import` reports that
+a signal resembles an existing entry, link the pull request to that entry rather
+than importing a second version of the same event. See `references/github.md`.
+
 ## Confirmation
 
 Short, factual, no celebration:
