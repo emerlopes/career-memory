@@ -2,6 +2,10 @@
 
 **Nunca esqueça o trabalho que você fez.**
 
+<p align="center">
+  <img src="docs/img/readme.png" alt="Career Memory: captura em linguagem natural, GitHub, notas e feedbacks; memória local em Markdown; e transformação em daily, documento de conquistas, review de performance, caso de promoção, currículo e histórias de entrevista" width="100%">
+</p>
+
 Career Memory é uma agent skill que mantém um registro persistente e factual do
 seu trabalho profissional — e transforma esse mesmo registro no que você
 precisar escrever depois: uma daily, um brag document, uma avaliação de
@@ -206,7 +210,7 @@ Duas coisas que essa parte nunca faz:
   do retry parou os alertas?"), e a resposta é registrada como você deu. Sem
   resposta, `Impact: not documented` continua sendo o estado correto.
 - **Não confunde o registro com a semana.** Duas entradas significam duas
-  entradas *registradas* — não que você fez duas coisas. Uma queda em relação ao
+  entradas _registradas_ — não que você fez duas coisas. Uma queda em relação ao
   mês passado é um fato sobre a captura, não sobre você.
 
 E não vira lembrete chato: uma oferta por sessão, com número na frase, e se você
