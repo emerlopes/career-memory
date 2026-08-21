@@ -152,5 +152,117 @@ check "validate works without PyYAML" "valid" \
 check "uninitialised store gives a clear message" "No Career Memory store" \
   env CAREER_MEMORY_HOME="$WORK/nowhere" python3 "$CM" list
 
+# --- github (v0.2) ---------------------------------------------------------
+# A fake `gh` on PATH answers from tests/fixtures/github, so discovery is
+# exercised end to end without a network or an account.
+mkdir -p "$WORK/bin"
+ln -s "$ROOT/tests/fake-gh.sh" "$WORK/bin/gh"
+export PATH="$WORK/bin:$PATH"
+export FAKE_GH_FIXTURES="$ROOT/tests/fixtures/github"
+export CAREER_MEMORY_HOME="$WORK/gh-store"
+run init >/dev/null
+RANGE=(--from 2026-01-01 --to 2026-01-31)
+ALL_KINDS=(--kinds pr,issue,review,commit)
+
+check "github check resolves the account" "reachable as @testuser" run github check
+check "github check names the backend" "backend: gh" run github check
+
+check "discover finds pull requests" "acme/payments#123" run github discover "${RANGE[@]}"
+check "discover finds issues" "acme/payments#45" run github discover "${RANGE[@]}"
+check "discover finds reviews" "acme/ledger#77" run github discover "${RANGE[@]}"
+check_absent "commits are opt-in" "abc1234" run github discover "${RANGE[@]}"
+check "discover finds commits when asked" "acme/payments@abc1234" \
+  run github discover "${RANGE[@]}" "${ALL_KINDS[@]}"
+check "discover marks unrecorded signals as new" "5 new" \
+  run github discover "${RANGE[@]}" "${ALL_KINDS[@]}"
+check "refs format prints bare references" "acme/payments#123" \
+  run github discover "${RANGE[@]}" --format refs
+check "json format carries the evidence type" '"evidence_type": "github_review"' \
+  run github discover "${RANGE[@]}" --format json
+
+check "dry-run reports without writing" "Would import" \
+  run github import "${RANGE[@]}" "${ALL_KINDS[@]}" --dry-run
+check_status "dry-run wrote nothing" 1 test -f "$WORK/gh-store/candidates/2026-01-15-pr-acme-payments-123.md"
+
+check "import writes candidates" "Imported 5 candidate" \
+  run github import "${RANGE[@]}" "${ALL_KINDS[@]}"
+check_status "imported entry landed in candidates/" 0 \
+  test -f "$WORK/gh-store/candidates/2026-01-15-pr-acme-payments-123.md"
+check_absent "import never writes confirmed entries" "status: confirmed" \
+  run show 2026-01-15-pr-acme-payments-123
+check "imported PR keeps the merge date" "date: 2026-01-15" run show 2026-01-15-pr-acme-payments-123
+check "imported PR links the pull request" 'reference: "acme/payments#123"' \
+  run show 2026-01-15-pr-acme-payments-123
+check "labels become tags" "- reliability" run show 2026-01-15-pr-acme-payments-123
+check_absent "process labels are dropped" "size/l" run show 2026-01-15-pr-acme-payments-123
+check "reviews use the review evidence type" "type: github_review" \
+  run show 2026-01-18-review-acme-ledger-77
+check "reviews credit the pull request author" "- colleague" run show 2026-01-18-review-acme-ledger-77
+check "review dates are labelled as a proxy" "does not report when the review" \
+  run show 2026-01-18-review-acme-ledger-77
+check "issues are titled as opened" "# Opened issue:" run show 2026-01-16-issue-acme-payments-45
+check "imported entries validate" "valid" run validate
+
+check "re-import skips what is already recorded" "already recorded" \
+  run github import "${RANGE[@]}" "${ALL_KINDS[@]}"
+check "re-import writes nothing new" "Imported 0 candidate" \
+  run github import "${RANGE[@]}" "${ALL_KINDS[@]}"
+check "discover marks recorded signals as saved" "saved" \
+  run github discover "${RANGE[@]}" "${ALL_KINDS[@]}"
+check "new-only hides recorded signals" "Nothing found" \
+  run github discover "${RANGE[@]}" "${ALL_KINDS[@]}" --new-only
+
+# A GitHub signal that duplicates a hand-written entry should be linked, not imported.
+export CAREER_MEMORY_HOME="$WORK/gh-store2"
+run init >/dev/null
+run add "Fix race condition in payment capture" --date 2026-01-14 \
+  --type problem-solving --project payments >/dev/null
+check "import suggests linking over duplicating" "link the evidence instead" \
+  run github import "${RANGE[@]}" --kinds pr
+check "the suggestion names the existing entry" \
+  "github link 2026-01-14-fix-race-condition-payment-capture acme/payments#123" \
+  run github import "${RANGE[@]}" --kinds pr
+
+LINKED="2026-01-14-fix-race-condition-payment-capture"
+check "link attaches a pull request from a URL" "evidence github_pr acme/payments#123" \
+  run github link "$LINKED" "https://github.com/acme/payments/pull/123"
+check "link fetches the title" "title: Fix race condition in payment capture" run show "$LINKED"
+check "link treats a URL and its shorthand as one reference" "already linked" \
+  run github link "$LINKED" "acme/payments#123"
+check "link accepts a commit sha" "evidence github_commit acme/payments@abc1234" \
+  run github link "$LINKED" "acme/payments@abc1234def5678" --no-fetch
+check "link rejects a reference it cannot parse" "unrecognised GitHub reference" \
+  run github link "$LINKED" "not a reference"
+check "linked entries still validate" "valid" run validate
+check "linked evidence survives without PyYAML" "acme/payments#123" \
+  env PYTHONPATH="$WORK/noyaml" python3 "$CM" show "$LINKED"
+check "a linked pull request is not imported again" "already recorded" \
+  run github import "${RANGE[@]}" --kinds pr
+
+run add "Manual evidence URL" --date 2026-03-01 --id manual-url --force \
+  --evidence 'github_pr:https://github.com/acme/payments/pull/130' >/dev/null
+check "a URL passed to --evidence stays whole" \
+  "reference: https://github.com/acme/payments/pull/130" run show manual-url
+check "a manually pasted URL blocks a duplicate import" "2 signal(s) already recorded" \
+  run github import "${RANGE[@]}" --kinds pr
+
+# Without a backend the failure must be obvious and distinguishable (exit 3).
+check "missing GitHub access is explained" "no GitHub access" \
+  env -u GITHUB_TOKEN -u GH_TOKEN PATH="/usr/bin:/bin" python3 "$CM" github check
+check_status "missing GitHub access exits 3" 3 \
+  env -u GITHUB_TOKEN -u GH_TOKEN PATH="/usr/bin:/bin" python3 "$CM" github check
+check "the api backend asks for a token" "GITHUB_TOKEN" \
+  env -u GITHUB_TOKEN -u GH_TOKEN python3 "$CM" github check --backend api
+
+printf '#!/usr/bin/env bash\necho "To get started with GitHub CLI, please run: gh auth login" >&2\nexit 4\n' \
+  > "$WORK/bin/gh-unauthenticated"
+chmod +x "$WORK/bin/gh-unauthenticated"
+mkdir -p "$WORK/unauth"
+cp "$WORK/bin/gh-unauthenticated" "$WORK/unauth/gh"
+check "an unauthenticated gh says how to fix it" "run \`gh auth login\`" \
+  env PATH="$WORK/unauth:/usr/bin:/bin" python3 "$CM" github check
+check_status "an unauthenticated gh exits 3" 3 \
+  env PATH="$WORK/unauth:/usr/bin:/bin" python3 "$CM" github check
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

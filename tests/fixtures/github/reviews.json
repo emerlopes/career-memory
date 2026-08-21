@@ -1,0 +1,18 @@
+{
+  "total_count": 1,
+  "items": [
+    {
+      "number": 77,
+      "title": "Split the settlement worker",
+      "html_url": "https://github.com/acme/ledger/pull/77",
+      "repository_url": "https://api.github.com/repos/acme/ledger",
+      "state": "closed",
+      "created_at": "2026-01-05T10:00:00Z",
+      "closed_at": "2026-01-18T10:00:00Z",
+      "updated_at": "2026-01-18T12:00:00Z",
+      "user": { "login": "colleague" },
+      "labels": [],
+      "pull_request": { "merged_at": "2026-01-18T10:00:00Z" }
+    }
+  ]
+}

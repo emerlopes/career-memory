@@ -1,0 +1,35 @@
+{
+  "total_count": 2,
+  "items": [
+    {
+      "number": 123,
+      "title": "Fix race condition in payment capture",
+      "html_url": "https://github.com/acme/payments/pull/123",
+      "repository_url": "https://api.github.com/repos/acme/payments",
+      "state": "closed",
+      "draft": false,
+      "created_at": "2026-01-12T09:00:00Z",
+      "closed_at": "2026-01-15T17:20:00Z",
+      "updated_at": "2026-01-15T17:20:00Z",
+      "user": { "login": "testuser" },
+      "labels": [{ "name": "bug" }, { "name": "reliability" }, { "name": "size/L" }],
+      "body": "Serialises capture so two workers cannot claim the same charge.",
+      "pull_request": { "merged_at": "2026-01-15T17:20:00Z" }
+    },
+    {
+      "number": 130,
+      "title": "Add retry budget to the ledger client",
+      "html_url": "https://github.com/acme/payments/pull/130",
+      "repository_url": "https://api.github.com/repos/acme/payments",
+      "state": "open",
+      "draft": false,
+      "created_at": "2026-01-20T11:00:00Z",
+      "closed_at": null,
+      "updated_at": "2026-01-21T08:00:00Z",
+      "user": { "login": "testuser" },
+      "labels": [],
+      "body": "",
+      "pull_request": { "merged_at": null }
+    }
+  ]
+}

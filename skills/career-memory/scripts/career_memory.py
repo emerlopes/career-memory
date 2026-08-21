@@ -43,6 +43,7 @@ EVIDENCE_TYPES = [
     "github_pr",
     "github_issue",
     "github_commit",
+    "github_review",
     "document",
     "metric",
     "dashboard",
@@ -498,9 +499,12 @@ def similarity(a: str, b: str) -> float:
 
 
 def find_duplicates(store: Path, title: str, date: dt.date, project: str | None,
-                    window_days: int = 21) -> list[tuple[float, Entry]]:
+                    window_days: int = 21,
+                    entries: list[Entry] | None = None) -> list[tuple[float, Entry]]:
     hits = []
-    for entry in load_entries(store, include_candidates=True):
+    if entries is None:
+        entries = load_entries(store, include_candidates=True)
+    for entry in entries:
         try:
             entry_date = dt.date.fromisoformat(entry.date)
         except ValueError:
@@ -513,6 +517,53 @@ def find_duplicates(store: Path, title: str, date: dt.date, project: str | None,
         if score >= 0.3:
             hits.append((round(min(score, 1.0), 2), entry))
     return sorted(hits, key=lambda pair: pair[0], reverse=True)[:5]
+
+
+def compose_entry(meta: dict, title: str, body: str = "") -> Entry:
+    sections = [f"# {title}", ""]
+    if body:
+        sections += [body.strip(), ""]
+    return Entry(Path(), meta, "\n".join(sections))
+
+
+# ---------------------------------------------------------------------------
+# GitHub (v0.2)
+# ---------------------------------------------------------------------------
+
+def github_module():
+    """career_github.py lives next to this file; import it without side effects."""
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    try:
+        import career_github  # type: ignore
+    except ImportError:
+        die("career_github.py is missing next to career_memory.py")
+    return career_github
+
+
+def evidence_index(store: Path, entries: list[Entry] | None = None) -> dict[str, Entry]:
+    """Every evidence reference already in the store, keyed by normalised form.
+
+    A pull request recorded as a URL and the same pull request recorded as
+    owner/repo#123 are the same evidence; discovery must not offer either twice.
+    """
+    gh = github_module()
+    index: dict[str, Entry] = {}
+    if entries is None:
+        entries = load_entries(store, include_candidates=True)
+    for entry in entries:
+        evidence = entry.meta.get("evidence") or []
+        if not isinstance(evidence, list):
+            continue
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            for key in ("reference", "url", "value"):
+                raw = str(item.get(key) or "").strip()
+                if raw:
+                    index.setdefault(gh.normalise_reference(raw), entry)
+    return index
 
 
 # ---------------------------------------------------------------------------
@@ -598,10 +649,7 @@ def cmd_add(args) -> int:
     if args.source:
         meta["source"] = args.source
 
-    sections = [f"# {args.title}", ""]
-    if body:
-        sections += [body.strip(), ""]
-    entry = Entry(Path(), meta, "\n".join(sections))
+    entry = compose_entry(meta, args.title, body)
 
     folder = "candidates" if status == "candidate" else (
         "feedback" if args.type == "feedback" else "entries"
@@ -912,6 +960,350 @@ def cmd_where(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# GitHub commands (v0.2)
+# ---------------------------------------------------------------------------
+
+# Mechanical defaults. They are a starting point for the agent and the user to
+# correct, never a claim about what the work meant.
+GITHUB_ENTRY_TYPE = {
+    "pr": "delivery",
+    "commit": "delivery",
+    "issue": "problem-solving",
+    "review": "collaboration",
+}
+
+GITHUB_KIND_LABEL = {
+    "pr": "pull requests",
+    "issue": "issues",
+    "review": "reviews",
+    "commit": "commits",
+}
+
+
+def github_die(exc) -> None:
+    """GitHub problems are environmental, so they get their own exit code."""
+    print(f"error: {exc}", file=sys.stderr)
+    sys.exit(3)
+
+
+def _github_client(args):
+    gh = github_module()
+    try:
+        return gh, gh.Client(backend=args.backend)
+    except gh.GitHubError as exc:
+        github_die(exc)
+
+
+def _github_range(args) -> tuple[str | None, str | None]:
+    date_from = getattr(args, "date_from", None)
+    date_to = getattr(args, "date_to", None)
+    # The default window applies only when no explicit range was given, so
+    # `--to 2026-01-31` on its own does not silently start 30 days ago.
+    window = args.window or (None if (date_from or date_to) else "30d")
+    since, until = parse_window(window) if window else (None, None)
+    if date_from:
+        since = parse_date(date_from).isoformat()
+    if date_to:
+        until = parse_date(date_to).isoformat()
+    return since, until
+
+
+def _github_kinds(gh, raw: str) -> list[str]:
+    kinds = split_csv(raw) or list(gh.DEFAULT_KINDS)
+    unknown = [k for k in kinds if k not in gh.KINDS]
+    if unknown:
+        die(f"unknown kind(s): {', '.join(unknown)} (known: {', '.join(gh.KINDS)})")
+    return kinds
+
+
+def _github_signals(gh, client, args) -> tuple[str, list[dict], str | None, str | None]:
+    since, until = _github_range(args)
+    kinds = _github_kinds(gh, args.kinds)
+    try:
+        login = args.user or client.login()
+        signals = gh.discover(
+            client, login, since, until, kinds=kinds, repo=args.repo, org=args.org,
+            visibility=args.visibility, by=args.by, limit=args.limit,
+        )
+    except gh.GitHubError as exc:
+        github_die(exc)
+    return login, signals, since, until
+
+
+def _github_labels_to_tags(labels: list[str]) -> list[str]:
+    tags = []
+    for label in labels:
+        name = str(label).strip().lower().replace(" ", "-")
+        # size/L, status/blocked and friends describe the process, not the work.
+        if not name or "/" in name or name in tags:
+            continue
+        tags.append(name)
+    return tags[:6]
+
+
+def _github_entry(signal: dict, project: str | None, with_body: bool) -> tuple[dict, str, str]:
+    kind = signal["kind"]
+    repo = signal.get("repo") or ""
+    ref = signal.get("ref") or ""
+    date = signal.get("date") or today().isoformat()
+    state = signal.get("state") or ""
+    url = signal.get("url") or ""
+    title = (signal.get("title") or ref).strip()
+
+    if kind == "review":
+        title = f"Reviewed: {title}"
+    elif kind == "issue":
+        title = f"Opened issue: {title}"
+
+    if kind == "pr":
+        if state == "merged":
+            line = f"Pull request {ref} — merged on {date}."
+        else:
+            opened = signal.get("created_at") or date
+            line = f"Pull request {ref} — {state or 'open'}, opened {opened}."
+    elif kind == "issue":
+        opened = signal.get("created_at") or date
+        line = f"Issue {ref} — {state or 'open'}, opened {opened}."
+    elif kind == "review":
+        author = signal.get("author")
+        line = f"Reviewed pull request {ref}" + (f", opened by @{author}." if author else ".")
+    else:
+        line = f"Commit {ref} — {date}."
+
+    body_lines = [line]
+    if url:
+        body_lines.append(url)
+    if signal.get("date_is_proxy"):
+        body_lines += [
+            "",
+            "GitHub search does not report when the review was submitted; this "
+            "entry is dated from the pull request's last update in the window.",
+        ]
+    if with_body and signal.get("body"):
+        excerpt = str(signal["body"]).strip()
+        if len(excerpt) > 800:
+            excerpt = excerpt[:800].rstrip() + "…"
+        body_lines += ["", "## Context", "", excerpt, "",
+                       "_(from the GitHub description, written by the user)_"]
+
+    identifier = signal.get("number") or signal.get("sha") or slugify(ref)
+    entry_id = f"{date}-{kind}-{slugify(repo.replace('/', '-'), max_words=4)}-{identifier}"
+
+    meta = {
+        "id": entry_id,
+        "date": date,
+        "type": GITHUB_ENTRY_TYPE.get(kind, "achievement"),
+        "project": project or (repo.split("/")[-1] if repo else None),
+        "status": "candidate",
+        "tags": _github_labels_to_tags(signal.get("labels") or []),
+        "people": [signal["author"]] if kind == "review" and signal.get("author") else [],
+        "evidence": [{
+            "type": signal.get("evidence_type") or "external_link",
+            "reference": ref,
+            "url": url,
+            "title": (signal.get("title") or "").strip(),
+        }],
+        "source": "github",
+    }
+    return meta, title, "\n".join(body_lines)
+
+
+def cmd_github_check(args) -> int:
+    gh, client = _github_client(args)
+    try:
+        login = args.user or client.login()
+    except gh.GitHubError as exc:
+        github_die(exc)
+    print(f"GitHub reachable as @{login}")
+    print(f"  {client.describe()}")
+    print("  read-only: discovery never writes to GitHub")
+    store = resolve_store(args.dir)
+    if not (store / "entries").is_dir():
+        print(f"  store: not initialised at {store} (run `init` before importing)")
+    else:
+        print(f"  store: {store}")
+    return 0
+
+
+def cmd_github_discover(args) -> int:
+    store = require_store(resolve_store(args.dir))
+    gh, client = _github_client(args)
+    login, signals, since, until = _github_signals(gh, client, args)
+    captured = evidence_index(store)
+
+    for signal in signals:
+        match = captured.get(gh.normalise_reference(signal["ref"]))
+        signal["captured_by"] = match.id if match else None
+
+    if args.new_only:
+        signals = [s for s in signals if not s["captured_by"]]
+
+    if args.format == "json":
+        print(json.dumps(signals, indent=2, ensure_ascii=False))
+        return 0
+    if args.format == "refs":
+        for signal in signals:
+            print(signal["ref"])
+        return 0
+
+    if since and until:
+        window = f"{since} → {until}"
+    elif since:
+        window = f"since {since}"
+    elif until:
+        window = f"up to {until}"
+    else:
+        window = "all time"
+    print(f"GitHub activity for @{login}  ({window})")
+    if not signals:
+        print("\nNothing found in this window.")
+        return 0
+
+    fresh = 0
+    for kind in gh.KINDS:
+        group = [s for s in signals if s["kind"] == kind]
+        if not group:
+            continue
+        print(f"\n{GITHUB_KIND_LABEL[kind]}")
+        for signal in group:
+            marker = "saved" if signal["captured_by"] else "new"
+            if not signal["captured_by"]:
+                fresh += 1
+            line = (f"  {marker:<5}  {signal['ref']:<34}  {signal['date']}  "
+                    f"{(signal.get('state') or ''):<7}  {signal['title']}")
+            if signal["captured_by"]:
+                line += f"\n         → {signal['captured_by']}"
+            print(line)
+
+    print(f"\n{len(signals)} signal(s): {fresh} new, {len(signals) - fresh} already recorded.")
+    if fresh:
+        print("Import the new ones as candidates with `github import`, "
+              "then confirm each with `promote`.")
+    return 0
+
+
+def cmd_github_import(args) -> int:
+    store = require_store(resolve_store(args.dir))
+    gh, client = _github_client(args)
+    login, signals, _, _ = _github_signals(gh, client, args)
+    known = load_entries(store, include_candidates=True)
+    captured = evidence_index(store, known)
+
+    imported, skipped, matches, failed = [], [], [], []
+    for signal in signals:
+        if gh.normalise_reference(signal["ref"]) in captured:
+            skipped.append(signal)
+            continue
+        meta, title, body = _github_entry(signal, args.project, args.with_body)
+        try:
+            date = dt.date.fromisoformat(meta["date"])
+        except ValueError:
+            date = today()
+        if not args.force:
+            duplicates = find_duplicates(store, title, date, meta.get("project"),
+                                         entries=known)
+            if duplicates:
+                matches.append((signal, duplicates[0][1]))
+                continue
+        path = store / "candidates" / f"{meta['id']}.md"
+        if path.exists():
+            skipped.append(signal)
+            continue
+        entry = compose_entry(meta, title, body)
+        if not args.dry_run:
+            try:
+                path.write_text(entry.render(), encoding="utf-8")
+            except OSError as exc:
+                failed.append((signal, exc))
+                continue
+        # Two pull requests in one batch can describe the same work.
+        known.append(Entry(path, meta, entry.body))
+        imported.append((signal, meta, path))
+
+    verb = "Would import" if args.dry_run else "Imported"
+    print(f"{verb} {len(imported)} candidate(s) from @{login}'s GitHub activity.")
+    for signal, meta, path in imported:
+        print(f"  {meta['id']}  [{meta['type']}]  {signal['ref']}")
+    if matches:
+        print(f"\n{len(matches)} signal(s) look like work you already recorded — "
+              f"link the evidence instead of duplicating the entry:")
+        for signal, entry in matches:
+            print(f"  {signal['ref']}  ~  {entry.id}")
+            print(f"    github link {entry.id} {signal['ref']}")
+    if skipped:
+        print(f"\n{len(skipped)} signal(s) already recorded; left alone.")
+    if failed:
+        print(f"\n{len(failed)} signal(s) could not be written:", file=sys.stderr)
+        for signal, exc in failed:
+            print(f"  {signal['ref']}: {exc}", file=sys.stderr)
+    if imported and not args.dry_run:
+        print("\nThese are candidates, not career memory yet. Review each one with "
+              "the user, then `promote <id>` or `dismiss <id>`.")
+    return 1 if failed else 0
+
+
+def cmd_github_link(args) -> int:
+    store = require_store(resolve_store(args.dir))
+    gh = github_module()
+    entry = _locate(store, args.id)
+
+    existing = entry.meta.get("evidence") or []
+    if not isinstance(existing, list):
+        existing = []
+    known = {
+        gh.normalise_reference(str(item.get("reference") or item.get("url") or ""))
+        for item in existing if isinstance(item, dict)
+    }
+
+    client = None
+    if not args.no_fetch:
+        try:
+            client = gh.Client(backend=args.backend)
+        except gh.GitHubError as exc:
+            print(f"warning: linking without titles ({exc})", file=sys.stderr)
+
+    changes = []
+    for raw in args.reference:
+        parsed = gh.parse_reference(raw)
+        if not parsed:
+            die(f"unrecognised GitHub reference: {raw!r} "
+                f"(use a URL, owner/repo#123 or owner/repo@sha)")
+        kind = args.kind or parsed["kind"]
+        title, url = "", parsed.get("url", "")
+        if client is not None:
+            try:
+                title, meta = gh.fetch_title(client, parsed)
+                url = meta.get("url") or url
+                if not args.kind and meta.get("kind"):
+                    kind = meta["kind"]
+            except gh.GitHubError as exc:
+                print(f"warning: could not read {parsed['ref']} ({exc})", file=sys.stderr)
+        key = gh.normalise_reference(parsed["ref"])
+        if key in known:
+            print(f"  already linked: {parsed['ref']}")
+            continue
+        known.add(key)
+        existing.append({
+            "type": gh.EVIDENCE_TYPE.get(kind, "external_link"),
+            "reference": parsed["ref"],
+            "url": url,
+            "title": title,
+        })
+        changes.append(f"evidence {gh.EVIDENCE_TYPE.get(kind, 'external_link')} {parsed['ref']}")
+
+    if not changes:
+        print("Nothing to link.")
+        return 0
+
+    entry.meta["evidence"] = existing
+    entry.path.write_text(Entry(entry.path, entry.meta, entry.body).render(), encoding="utf-8")
+    print(f"Updated: {entry.path}")
+    for change in changes:
+        print(f"  {change}")
+    return 0
+
+
 STORE_README = """# Career Memory
 
 This directory is your professional memory. It is plain Markdown — readable,
@@ -945,6 +1337,27 @@ def add_filter_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--include-candidates", action="store_true")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--format", choices=["table", "json", "paths", "full"], default="table")
+
+
+def add_github_args(parser: argparse.ArgumentParser, source: bool = True) -> None:
+    parser.add_argument("--backend", choices=["auto", "gh", "api"], default="auto",
+                        help="auto prefers the gh CLI, then $GITHUB_TOKEN")
+    parser.add_argument("--user", help="GitHub login (default: the authenticated user)")
+    if not source:
+        return
+    parser.add_argument("--window",
+                        help="7d, this-week, last-month, last-quarter "
+                             "(default: 30d, unless --from/--to are given)")
+    parser.add_argument("--from", dest="date_from", help="YYYY-MM-DD")
+    parser.add_argument("--to", dest="date_to", help="YYYY-MM-DD")
+    parser.add_argument("--kinds", default="pr,issue,review",
+                        help="pr, issue, review, commit (commits are opt-in)")
+    parser.add_argument("--repo", help="owner/name")
+    parser.add_argument("--org")
+    parser.add_argument("--visibility", choices=["all", "public", "private"], default="all")
+    parser.add_argument("--by", choices=["created", "updated", "merged", "closed"],
+                        default="created", help="which date the window filters on")
+    parser.add_argument("--limit", type=int, default=50, help="per kind")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1022,6 +1435,39 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("where", help="print the resolved store path")
     p.set_defaults(func=cmd_where)
+
+    gh = sub.add_parser(
+        "github",
+        help="find GitHub work and turn it into candidate evidence (read-only)",
+    )
+    gh_sub = gh.add_subparsers(dest="github_command", required=True)
+
+    p = gh_sub.add_parser("check", help="verify GitHub access and identity")
+    add_github_args(p, source=False)
+    p.set_defaults(func=cmd_github_check)
+
+    p = gh_sub.add_parser("discover", help="list GitHub activity and what is already recorded")
+    add_github_args(p)
+    p.add_argument("--new-only", action="store_true", help="hide signals already in the store")
+    p.add_argument("--format", choices=["table", "json", "refs"], default="table")
+    p.set_defaults(func=cmd_github_discover)
+
+    p = gh_sub.add_parser("import", help="write new GitHub signals as candidates")
+    add_github_args(p)
+    p.add_argument("--project", help="override the project (default: the repository name)")
+    p.add_argument("--with-body", action="store_true",
+                   help="include the PR/issue description as context")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--force", action="store_true", help="import even when an entry looks similar")
+    p.set_defaults(func=cmd_github_import)
+
+    p = gh_sub.add_parser("link", help="attach a PR, issue, review or commit to an entry")
+    p.add_argument("id")
+    p.add_argument("reference", nargs="+", help="URL, owner/repo#123 or owner/repo@sha")
+    p.add_argument("--kind", choices=list(GITHUB_ENTRY_TYPE), help="force the reference kind")
+    p.add_argument("--no-fetch", action="store_true", help="do not call GitHub for the title")
+    p.add_argument("--backend", choices=["auto", "gh", "api"], default="auto")
+    p.set_defaults(func=cmd_github_link)
 
     return parser
 

@@ -1,0 +1,18 @@
+{
+  "total_count": 1,
+  "items": [
+    {
+      "number": 45,
+      "title": "Duplicate charges when the ledger times out",
+      "html_url": "https://github.com/acme/payments/issues/45",
+      "repository_url": "https://api.github.com/repos/acme/payments",
+      "state": "closed",
+      "created_at": "2026-01-08T10:00:00Z",
+      "closed_at": "2026-01-16T10:00:00Z",
+      "updated_at": "2026-01-16T10:00:00Z",
+      "user": { "login": "testuser" },
+      "labels": [{ "name": "bug" }],
+      "body": "Reproduced twice in staging."
+    }
+  ]
+}
