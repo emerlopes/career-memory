@@ -9,7 +9,12 @@ Before writing any of them, pull the evidence:
 ```bash
 python3 "$CM" list --window last-quarter --format full
 python3 "$CM" stats --window 6m          # recurring themes, and where evidence is thin
+python3 "$CM" gaps --window last-quarter # what the record cannot prove yet
 ```
+
+Any weekly or monthly summaries already in `outputs/summaries/` are a shortcut:
+they are the same evidence, already grouped. Read them, but quote the entries —
+a summary is an output, not a source.
 
 ## Rules for all five
 

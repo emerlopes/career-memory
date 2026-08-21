@@ -123,10 +123,13 @@ Depois, peça o que precisar:
 | "que evidências eu tenho para Staff Engineer?" | Pontos fortes, padrões e as lacunas específicas                           |
 | "transforma isso em bullets de currículo"      | Bullets de uma linha, só com números reais                                |
 | "me prepara para entrevista comportamental"    | Histórias STAR construídas a partir de eventos reais                      |
+| "fecha minha semana"                           | Resumo semanal do que foi registrado, com o que ficou sem evidência       |
+| "o que está faltando na minha memória?"        | As lacunas concretas: sem evidência, sem impacto, candidatos parados      |
 
 Há slash commands para as mesmas coisas: `/career-memory:career-daily`,
 `career-add`, `career-brag`, `career-review`, `career-promotion`,
-`career-resume`, `career-interview`, `career-search`, `career-github`.
+`career-resume`, `career-interview`, `career-search`, `career-github`,
+`career-weekly`, `career-monthly`, `career-checkup`, `career-gaps`.
 
 ## GitHub
 
@@ -165,6 +168,50 @@ O que a descoberta faz e o que ela não faz:
 - O título da PR é a evidência, não o impacto. `Impact: not documented` continua
   lá até você dizer o que aquilo mudou.
 
+## Memória proativa
+
+Registrar só funciona se continuar acontecendo — e normalmente para. Depois de
+duas semanas ninguém lembra, e o trimestre inteiro some. Career Memory percebe
+isso e diz uma frase útil, no momento em que ela é útil:
+
+> Sua última captura foi há 11 dias, e a semana passada tem 4 entradas sem
+> resumo. Quer que eu escreva?
+
+```text
+/career-memory:career-weekly last-week     # resumo semanal
+/career-memory:career-monthly last-month   # resumo mensal
+/career-memory:career-checkup              # o que está pendente
+/career-memory:career-gaps                 # o que o registro ainda não prova
+```
+
+```bash
+python3 $CM checkup                                        # panorama: pendências e lacunas
+python3 $CM checkup --github                               # inclui atividade do GitHub fora do registro
+python3 $CM summary --window last-week --format markdown   # os fatos da semana
+python3 $CM gaps --window last-quarter                     # evidências faltantes
+```
+
+Os resumos vão para `outputs/summaries/2026-W33.md` e `outputs/summaries/2026-08.md`.
+É por esse nome que o `checkup` sabe qual semana ou mês ainda não foi fechado.
+
+As lacunas que ele encontra são de seis tipos: entrada **sem evidência**, **sem
+impacto documentado**, impacto ainda marcado como inferido, **candidato parado**
+esperando sua confirmação, **período sem nada registrado** e **competência do seu
+`profile.md`** que nenhuma entrada menciona — essa última é a mais útil antes de
+uma conversa de promoção.
+
+Duas coisas que essa parte nunca faz:
+
+- **Não preenche lacuna.** Cada lacuna vira uma pergunta para você ("aquele fix
+  do retry parou os alertas?"), e a resposta é registrada como você deu. Sem
+  resposta, `Impact: not documented` continua sendo o estado correto.
+- **Não confunde o registro com a semana.** Duas entradas significam duas
+  entradas *registradas* — não que você fez duas coisas. Uma queda em relação ao
+  mês passado é um fato sobre a captura, não sobre você.
+
+E não vira lembrete chato: uma oferta por sessão, com número na frase, e se você
+não quiser, o assunto morre ali.
+
 ## Seus dados
 
 Markdown puro, num diretório que é seu:
@@ -177,6 +224,7 @@ Markdown puro, num diretório que é seu:
 ├── feedback/           feedbacks recebidos
 ├── projects/           contexto por projeto
 └── outputs/            documentos gerados
+    └── summaries/      resumos semanais e mensais, um arquivo por período
 ```
 
 Local por padrão. Sem banco de dados, sem conta, sem servidor, nada é enviado
@@ -201,6 +249,9 @@ python3 $CM update 2026-08-20-liderei-migracao-4-servicos --add-evidence 'github
 python3 $CM list --window last-quarter
 python3 $CM search "confiabilidade" --format full
 python3 $CM stats --window 6m
+python3 $CM summary --window last-week --format markdown
+python3 $CM gaps --window last-quarter
+python3 $CM checkup
 python3 $CM validate
 
 python3 $CM github discover --window last-month
@@ -214,8 +265,8 @@ não é necessário.
 ## Roadmap
 
 - **v0.1** — Armazenamento em Markdown, captura, candidatos, busca, brag documents e modo daily
-- **v0.2** — GitHub: descobrir PRs, issues, commits e reviews como evidências candidatas _(atual)_
-- **v0.3** — Memória proativa: resumos semanais/mensais, detecção de evidências faltantes
+- **v0.2** — GitHub: descobrir PRs, issues, commits e reviews como evidências candidatas
+- **v0.3** — Memória proativa: resumos semanais/mensais, detecção de evidências faltantes _(atual)_
 - **v0.4** — Mais interfaces: Telegram, CLI independente, outros agentes
 - **v0.5** — Inteligência de carreira: evolução de competências, análise de lacunas para promoção ao longo do tempo
 

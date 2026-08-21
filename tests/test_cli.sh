@@ -269,5 +269,135 @@ check "an unauthenticated gh says how to fix it" "run \`gh auth login\`" \
 check_status "an unauthenticated gh exits 3" 3 \
   env PATH="$WORK/unauth:/usr/bin:/bin" python3 "$CM" github check
 
+# --- proactive memory (v0.3) -----------------------------------------------
+# Anchored on calendar weeks rather than "N days ago", so the suite gives the
+# same answers whatever weekday it runs on.
+export CAREER_MEMORY_HOME="$WORK/proactive"
+run init >/dev/null
+
+iso() { python3 -c "import datetime as d,sys; x=d.date.fromisoformat(sys.argv[1]); y,w,_=x.isocalendar(); print(f'{y}-W{w:02d}')" "$1"; }
+offset() { python3 -c "import datetime as d,sys; t=d.date.today(); print(t-d.timedelta(days=t.weekday())+d.timedelta(days=int(sys.argv[1])))" "$1"; }
+
+THIS_MON="$(offset 0)"
+LAST_MON="$(offset -7)"; LAST_WED="$(offset -5)"
+LAST_WEEK_LABEL="$(iso "$LAST_MON")"
+THIS_WEEK_LABEL="$(iso "$THIS_MON")"
+LONG_AGO="$(day 70)"
+
+run add "Shipped the payments dashboard" --date "$THIS_MON" --type delivery \
+  --project payments --tags reliability --evidence 'github_pr:#12' \
+  --impact "Support stopped exporting CSVs by hand" >/dev/null
+run add "Mentored Ana through her first migration" --date "$LAST_WED" \
+  --type leadership --project platform --people Ana >/dev/null
+run add "Older caching work" --date "$LONG_AGO" --type delivery --project cache >/dev/null
+run add "Reviewed the auth rewrite" --date "$(day 30)" --type collaboration \
+  --project auth --status candidate --id stale-candidate >/dev/null
+
+check_status "init creates outputs/summaries" 0 test -d "$WORK/proactive/outputs/summaries"
+
+# --- summary ---------------------------------------------------------------
+check "summary names the current week" "Week $THIS_WEEK_LABEL (in progress)" run summary
+check "summary counts what was recorded" "1 entry recorded" run summary
+check "summary compares with the same slice of the previous week" \
+  "previous period $LAST_WEEK_LABEL" run summary
+check "summary reports evidence coverage" "Evidence attached: 1/1" run summary
+check "summary suggests the period file" "outputs/summaries/$THIS_WEEK_LABEL.md" run summary
+check "summary of a past week finds its entry" "Mentored Ana" run summary --window last-week
+check "summary flags entries without impact" "without a documented impact" \
+  run summary --window last-week
+check "summary names pending candidates" "candidate(s) awaiting confirmation" \
+  run summary --from "$LONG_AGO" --to "$THIS_MON"
+check "an empty period is reported as empty" "Nothing was recorded in this period" \
+  run summary --from 2020-01-06 --to 2020-01-12
+check "an empty period does not read as an idle week" "not about the work" \
+  run summary --from 2020-01-06 --to 2020-01-12
+check "period shorthand selects the month" "Month" run summary --period month
+check "explicit ranges still work" "2020-01-06 → 2020-01-12" \
+  run summary --from 2020-01-06 --to 2020-01-12
+check "project filter narrows the summary" "project: platform" \
+  run summary --window last-week --project platform
+
+check "markdown output is a document" "# Weekly summary" run summary --window last-week --format markdown
+check "markdown output warns against invention" "Do not add anything" \
+  run summary --window last-week --format markdown
+check "markdown records missing impact honestly" "Impact: not documented" \
+  run summary --window last-week --format markdown
+check "monthly markdown is labelled monthly" "# Monthly summary" \
+  run summary --window this-month --format markdown
+check "json output carries the period label" "\"label\": \"$THIS_WEEK_LABEL\"" \
+  run summary --format json
+check "json output carries the suggested path" '"output_path"' run summary --format json
+
+# --- gaps ------------------------------------------------------------------
+check "gaps finds entries with no evidence" "No evidence attached" run gaps
+check "gaps names the entry, not just the id" "Mentored Ana through her first migration" run gaps
+check "gaps prints the command that fixes it" "--add-evidence" run gaps
+check "gaps finds entries with no impact" "No impact documented" run gaps
+check_absent "a complete entry is not a gap" "Shipped the payments dashboard" run gaps
+check "gaps finds candidates left waiting" "Candidate still awaiting" run gaps
+check "stale-days controls what counts as waiting" "Nothing missing in this window" \
+  run gaps --kind stale-candidate --stale-days 90
+check "gaps finds stretches with nothing recorded" "consecutive weeks with nothing recorded" \
+  run gaps --kind quiet-period
+check "a quiet stretch suggests looking at GitHub" "github discover --from" \
+  run gaps --kind quiet-period
+check "kind filter narrows the report" "No evidence attached" run gaps --kind no-evidence
+check_absent "kind filter excludes other kinds" "No impact documented" run gaps --kind no-evidence
+check "gaps is about the record, not the work" "record cannot prove" run gaps
+check "gaps json is parseable" '"kind": "no-evidence"' run gaps --kind no-evidence --format json
+
+printf '\n## Competencies\n\n- payments\n- quantum tunnelling\n' >> "$WORK/proactive/profile.md"
+check "an unevidenced competency is reported" "quantum tunnelling" \
+  run gaps --kind uncovered-competency
+check_absent "an evidenced competency is not" "payments" run gaps --kind uncovered-competency
+check "the competency check points at a search" 'search "quantum tunnelling"' \
+  run gaps --kind uncovered-competency
+printf '\n## Compet\xc3\xaancias\n\n- design de sistemas\n' >> "$WORK/proactive/profile.md"
+check "an accented competency heading is read too" "design de sistemas" \
+  run gaps --kind uncovered-competency
+
+# --- checkup ---------------------------------------------------------------
+check "checkup reports the last capture" "Last capture:" run checkup
+check "checkup compares this week with last" "this week: 1   last week: 1" run checkup
+check "checkup lists the week that has no summary" "$LAST_WEEK_LABEL" run checkup
+check "checkup lists pending candidates" "stale-candidate" run checkup
+check "checkup counts gaps by kind" "No evidence attached" run checkup
+check "checkup suggests a next step" "--format markdown" run checkup
+check_absent "checkup never writes" "Recorded:" run checkup
+check "checkup json is parseable" '"summaries_due"' run checkup --format json
+
+printf '# Weekly summary\n' > "$WORK/proactive/outputs/summaries/$LAST_WEEK_LABEL.md"
+check_absent "a written summary stops being due" "$LAST_WEEK_LABEL" run checkup
+check "months are checked as well as weeks" "month " run checkup --months 6 --weeks 0
+
+run promote stale-candidate >/dev/null
+check "a confirmed candidate stops being pending" "none" run checkup
+
+# GitHub discovery reaches the checkup through the same fake gh.
+export CAREER_MEMORY_HOME="$WORK/gh-store2"
+check "checkup can look for uncaptured GitHub work" "not in the record yet" \
+  run checkup --github --github-days 400
+check "checkup shows the reference it found" "acme/ledger#77" \
+  run checkup --github --github-days 400
+check_absent "already-linked work is not offered again" "acme/payments#123" \
+  run checkup --github --github-days 400
+check "checkup asks to show the user before importing" "show the user" \
+  run checkup --github --github-days 400
+check "no GitHub access degrades instead of failing" "unavailable" \
+  env -u GITHUB_TOKEN -u GH_TOKEN PATH="/usr/bin:/bin" CAREER_MEMORY_HOME="$WORK/proactive" \
+  python3 "$CM" checkup --github
+check_status "no GitHub access still exits 0" 0 \
+  env -u GITHUB_TOKEN -u GH_TOKEN PATH="/usr/bin:/bin" CAREER_MEMORY_HOME="$WORK/proactive" \
+  python3 "$CM" checkup --github
+
+# The proactive commands must survive without PyYAML like everything else.
+check "summary works without PyYAML" "Mentored Ana" \
+  env PYTHONPATH="$WORK/noyaml" CAREER_MEMORY_HOME="$WORK/proactive" \
+  python3 "$CM" summary --window last-week
+check "gaps works without PyYAML" "No evidence attached" \
+  env PYTHONPATH="$WORK/noyaml" CAREER_MEMORY_HOME="$WORK/proactive" python3 "$CM" gaps
+check "checkup works without PyYAML" "Last capture:" \
+  env PYTHONPATH="$WORK/noyaml" CAREER_MEMORY_HOME="$WORK/proactive" python3 "$CM" checkup
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

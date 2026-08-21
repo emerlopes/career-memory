@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.0 — 2026-08-20
+
+Implements the v0.3 scope of [`docs/SPEC.md`](docs/SPEC.md): proactive memory —
+the skill now notices when the record is falling behind, instead of waiting to
+be asked.
+
+- `summary` — the facts of a week or a month: entries, themes, recurring skills,
+  people, evidence and impact coverage, and a comparison with the period before
+  (a half-finished week is compared with the same half of the previous week, so
+  Wednesday never reads as a decline). `table`, `markdown` and `json` output
+- `gaps` — missing-evidence detection in six kinds: `no-evidence`, `no-impact`,
+  `unverified-impact`, `stale-candidate`, `quiet-period` and
+  `uncovered-competency` (a competency listed in `profile.md` that no entry
+  mentions), each with the command that fixes it
+- `checkup` — periodic review prompt: days since the last capture, this week
+  against last week, weeks and months that hold entries but were never
+  summarised, candidates still waiting, gap counts, and — with `--github` —
+  GitHub activity that is not in the record yet
+- Summaries live in `outputs/summaries/<2026-W33|2026-08>.md`; `checkup` reads
+  that directory to know what is still due
+- `career-weekly`, `career-monthly`, `career-checkup` and `career-gaps` slash
+  commands, `references/proactive.md`, and weekly/monthly templates
+
+Nothing here writes on its own, and no gap is ever filled by the agent: a gap is
+a question to ask the user, and `Impact: not documented` remains a correct
+answer.
+
 ## 0.2.0 — 2026-08-20
 
 Implements the v0.2 scope of [`docs/SPEC.md`](docs/SPEC.md): GitHub as a source

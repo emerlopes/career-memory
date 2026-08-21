@@ -15,10 +15,13 @@ description: >-
   turn GitHub activity into evidence — when they ask what they shipped, mention
   a PR, issue, review or commit, or say "import my PRs", "check my GitHub",
   "link this PR to my career memory", "importa minhas PRs", "o que eu mergeei
-  esse mês".
+  esse mês". Use it for upkeep of that memory too: weekly and monthly summaries,
+  and finding what the record cannot prove — "weekly summary", "monthly
+  summary", "what am I missing", "what has no evidence", "resumo semanal",
+  "resumo mensal", "fecha minha semana".
 license: MIT
 metadata:
-  version: 0.2.0
+  version: 0.3.0
 ---
 
 # Career Memory
@@ -88,6 +91,9 @@ those parts exactly; you do the judgment.
 | Full text for synthesis | `python3 "$CM" list --window last-quarter --format full`                        |
 | Confirm a candidate     | `python3 "$CM" promote <id>`                                                    |
 | Themes and gaps         | `python3 "$CM" stats --window 6m`                                               |
+| A week or a month       | `python3 "$CM" summary --window last-week --format markdown`                    |
+| What is missing         | `python3 "$CM" gaps --window last-quarter`                                      |
+| Upkeep at a glance      | `python3 "$CM" checkup`                                                        |
 | Schema check            | `python3 "$CM" validate`                                                        |
 | GitHub access check     | `python3 "$CM" github check`                                                    |
 | GitHub activity         | `python3 "$CM" github discover --window 7d`                                     |
@@ -193,6 +199,53 @@ Three habits matter more than the commands:
 A merged PR means merged, not successful; lines changed are not impact. When the
 user mentions a PR number in passing, `github link` it to the entry rather than
 letting a second entry appear. Full guidance: `references/github.md`.
+
+## Proactive memory
+
+Capture only works if it keeps happening, and it usually stops. This is the part
+that notices — but the failure mode here is not missing a gap, it is becoming
+the thing that interrupts.
+
+```bash
+python3 "$CM" checkup                                     # what is due, waiting or unproven
+python3 "$CM" summary --window last-week --format markdown
+python3 "$CM" gaps --window last-quarter
+```
+
+`checkup` reads and reports; it never writes. Run it when the user opens a
+session after a break, asks for a daily, or asks for any generated document —
+not while they are mid-task. Then say **one line**, with a number in it:
+
+> Your last capture was 11 days ago, and last week has 4 entries but no summary.
+> Want me to write it?
+
+Offer once. If they do not take it, drop it and do not raise it again this
+session.
+
+**Weekly and monthly summaries** come from `summary`, which gives you the facts
+of a period — entries, themes, evidence coverage, and how it compares with the
+period before. Write the result to `outputs/summaries/<label>.md` (`2026-W33.md`,
+`2026-08.md`); `summary` prints the exact path and `checkup` reads that directory
+to know what is still missing. The trap is treating the store as the week: two
+entries means two entries were *recorded*, and a drop from last month is a fact
+about capture, not about the user. Say it that way, and offer `github discover`
+for the same range before anyone concludes a period was quiet.
+
+**Missing-evidence detection** comes from `gaps`: entries nobody could verify,
+impact never documented, impact still marked inferred, candidates never
+confirmed, stretches with nothing recorded, and competencies in `profile.md`
+that no entry mentions. Each is a statement about the record, never about the
+work — "no evidence attached" means a future reader has nothing to check.
+
+Gaps are questions to ask, one at a time, not a list to read out:
+
+> The retry-storm fix from Monday has no impact recorded. Did that stop the
+> pages?
+
+Record what they answer. If they do not know, leave it undocumented — that is
+the correct final state for plenty of entries, and it is the whole point.
+
+Full guidance, including when *not* to prompt: `references/proactive.md`.
 
 ## Retrieval
 

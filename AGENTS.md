@@ -12,6 +12,7 @@ skills/career-memory/
 │   ├── capture.md        what to record, candidates, duplicates, examples
 │   ├── daily.md          standup mode
 │   ├── github.md         discovery, import as candidates, evidence linking
+│   ├── proactive.md      summaries, missing evidence, when not to prompt
 │   └── outputs.md        brag, review, promotion, resume, interview
 ├── templates/        starting points for generated documents
 └── scripts/
@@ -32,3 +33,9 @@ Any change that makes it easier for the agent to state something the user did
 not is a regression, however good the output looks. Two corollaries in the
 GitHub code: discovered signals are written as candidates and nothing else, and
 GitHub metadata is never read as impact.
+
+The v0.3 commands (`summary`, `gaps`, `checkup`) report on the *record*, never
+on the work — "no evidence attached" is a fact about a file. Keep that framing
+in any wording change: the inverse reading is both discouraging and false, and
+a gap the agent fills in for the user is the same regression as an invented
+metric.

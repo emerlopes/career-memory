@@ -26,7 +26,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 ENTRY_TYPES = [
     "achievement",
@@ -441,7 +441,8 @@ def parse_window(value: str | None) -> tuple[str | None, str | None]:
     match = re.fullmatch(r"(\d+)([dwmy])", v)
     if match:
         return shift(now, int(match.group(1)), match.group(2)).isoformat(), now.isoformat()
-    die(f"unrecognised window: {value!r} (try 7d, this-week, last-quarter, 2026-01-01:2026-03-31)")
+    die(f"unrecognised window: {value!r} (try 7d, this-week, last-quarter; "
+        f"for an exact range use --from/--to)")
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +576,7 @@ def cmd_init(args) -> int:
     store.mkdir(parents=True, exist_ok=True)
     for sub in SUBDIRS:
         (store / sub).mkdir(exist_ok=True)
+    summaries_dir(store).mkdir(exist_ok=True)
     templates = Path(__file__).resolve().parent.parent / "templates"
 
     created = []
@@ -729,7 +731,7 @@ def _output(entries: list[Entry], fmt: str) -> None:
         if str(meta.get("status", "confirmed")) != "confirmed":
             bits.append(f"<{meta.get('status')}>")
         print("  ".join(b for b in bits if b))
-    print(f"\n{len(entries)} entr{'y' if len(entries) == 1 else 'ies'}")
+    print(f"\n{entry_count(len(entries))}")
 
 
 def cmd_list(args) -> int:
@@ -880,14 +882,6 @@ def cmd_stats(args) -> int:
         print("No entries in this window.")
         return 0
 
-    def tally(getter):
-        counts: dict[str, int] = {}
-        for entry in entries:
-            for value in getter(entry):
-                if value:
-                    counts[str(value)] = counts.get(str(value), 0) + 1
-        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-
     print(f"{len(entries)} entries  ({entries[-1].date} → {entries[0].date})")
     for label, getter in (
         ("By type", lambda e: [e.meta.get("type")]),
@@ -896,7 +890,7 @@ def cmd_stats(args) -> int:
         ("Top tags", lambda e: e.field_list("tags")),
         ("People", lambda e: e.field_list("people")),
     ):
-        rows = tally(getter)[:10]
+        rows = tally(entries, getter)[:10]
         if rows:
             print(f"\n{label}:")
             for name, count in rows:
@@ -996,17 +990,9 @@ def _github_client(args):
 
 
 def _github_range(args) -> tuple[str | None, str | None]:
-    date_from = getattr(args, "date_from", None)
-    date_to = getattr(args, "date_to", None)
     # The default window applies only when no explicit range was given, so
     # `--to 2026-01-31` on its own does not silently start 30 days ago.
-    window = args.window or (None if (date_from or date_to) else "30d")
-    since, until = parse_window(window) if window else (None, None)
-    if date_from:
-        since = parse_date(date_from).isoformat()
-    if date_to:
-        until = parse_date(date_to).isoformat()
-    return since, until
+    return _range_from_args(args, "30d")
 
 
 def _github_kinds(gh, raw: str) -> list[str]:
@@ -1304,6 +1290,840 @@ def cmd_github_link(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Proactive memory (v0.3)
+# ---------------------------------------------------------------------------
+
+# Everything below reports on the record, never on the work. "No evidence
+# attached" is a statement about a file, not about what the user did.
+
+GAP_KINDS = (
+    "no-evidence",
+    "no-impact",
+    "unverified-impact",
+    "stale-candidate",
+    "quiet-period",
+    "uncovered-competency",
+)
+
+GAP_LABEL = {
+    "no-evidence": "No evidence attached",
+    "no-impact": "No impact documented",
+    "unverified-impact": "Impact recorded but not confirmed",
+    "stale-candidate": "Candidate still awaiting your confirmation",
+    "quiet-period": "Stretch with nothing recorded",
+    "uncovered-competency": "Competency with no matching entry",
+}
+
+
+def entry_count(n: int) -> str:
+    return f"{n} entr{'y' if n == 1 else 'ies'}"
+
+
+def week_range(day: dt.date) -> tuple[dt.date, dt.date]:
+    start = day - dt.timedelta(days=day.weekday())
+    return start, start + dt.timedelta(days=6)
+
+
+def month_range(day: dt.date) -> tuple[dt.date, dt.date]:
+    start = day.replace(day=1)
+    following = (start.replace(year=start.year + 1, month=1) if start.month == 12
+                 else start.replace(month=start.month + 1))
+    return start, following - dt.timedelta(days=1)
+
+
+def iso_week_label(day: dt.date) -> str:
+    year, week, _ = day.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def month_label(day: dt.date) -> str:
+    return f"{day.year}-{day.month:02d}"
+
+
+def classify_period(since: str | None, until: str | None) -> dict:
+    """Name a date range: a calendar week, a calendar month, or neither.
+
+    A week that has not finished yet is still that week — labelled in progress,
+    so a Wednesday summary never reads as a report on the whole week.
+    """
+    try:
+        start = dt.date.fromisoformat(since or "")
+        end = dt.date.fromisoformat(until or "")
+    except ValueError:
+        label = f"{since or '…'}_{until or '…'}"
+        return {"label": label, "kind": "range", "partial": False,
+                "title": f"{since or '…'} → {until or '…'}"}
+
+    week_start, week_end = week_range(start)
+    month_start, month_end = month_range(start)
+    if start == week_start and end == week_end:
+        kind, label, partial = "week", iso_week_label(start), False
+    elif start == month_start and end == month_end:
+        kind, label, partial = "month", month_label(start), False
+    elif start == week_start and end < week_end and (end - start).days <= 6:
+        kind, label, partial = "week", iso_week_label(start), True
+    elif start == month_start and end < month_end:
+        kind, label, partial = "month", month_label(start), True
+    else:
+        return {"label": f"{start.isoformat()}_{end.isoformat()}", "kind": "range",
+                "partial": False,
+                "title": f"{start.isoformat()} → {end.isoformat()}"}
+
+    title = f"{'Week' if kind == 'week' else 'Month'} {label}"
+    if partial:
+        title += " (in progress)"
+    return {"label": label, "kind": kind, "partial": partial, "title": title}
+
+
+def previous_range(period: dict, since: str | None,
+                   until: str | None) -> tuple[str | None, str | None]:
+    """The comparable slice before this one.
+
+    A half-finished week is compared with the same half of the week before, not
+    with the four days that happen to precede it — otherwise Wednesday's summary
+    reports a drop that only means the week is not over.
+    """
+    if not (since and until):
+        return None, None
+    start = dt.date.fromisoformat(since)
+    end = dt.date.fromisoformat(until)
+    if period["kind"] == "week":
+        return ((start - dt.timedelta(days=7)).isoformat(),
+                (end - dt.timedelta(days=7)).isoformat())
+    if period["kind"] == "month":
+        previous_start = (start.replace(day=1) - dt.timedelta(days=1)).replace(day=1)
+        _, previous_end = month_range(previous_start)
+        return (previous_start.isoformat(),
+                min(previous_start + (end - start), previous_end).isoformat())
+    span = (end - start).days + 1
+    return ((start - dt.timedelta(days=span)).isoformat(),
+            (start - dt.timedelta(days=1)).isoformat())
+
+
+def tally(entries: list[Entry], getter) -> list[tuple[str, int]]:
+    counts: dict[str, int] = {}
+    for entry in entries:
+        for value in getter(entry):
+            if value:
+                counts[str(value)] = counts.get(str(value), 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def entry_evidence(entry: Entry) -> list[dict]:
+    value = entry.meta.get("evidence") or []
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def evidence_refs(entry: Entry) -> list[str]:
+    refs = []
+    for item in entry_evidence(entry):
+        reference = str(item.get("reference") or item.get("url") or "").strip()
+        kind = str(item.get("type") or "").strip()
+        joined = " ".join(part for part in (kind, reference) if part)
+        if joined:
+            refs.append(joined)
+    return refs
+
+
+def entry_impact(entry: Entry) -> tuple[str, str]:
+    """(statement, confidence); an empty statement means nothing was documented."""
+    impact = entry.meta.get("impact")
+    if isinstance(impact, dict):
+        return (str(impact.get("statement") or "").strip(),
+                str(impact.get("confidence") or "").strip())
+    if isinstance(impact, str):
+        return impact.strip(), ""
+    return "", ""
+
+
+def split_by_status(entries: list[Entry]) -> tuple[list[Entry], list[Entry]]:
+    """(confirmed, candidates) — candidates are the ones in candidates/."""
+    candidates = [e for e in entries if e.path.parent.name == "candidates"]
+    confirmed = [e for e in entries if e.path.parent.name != "candidates"]
+    return confirmed, candidates
+
+
+def in_range(entries: list[Entry], since: str | None, until: str | None) -> list[Entry]:
+    kept = []
+    for entry in entries:
+        if not entry.date:
+            continue
+        if since and entry.date < since:
+            continue
+        if until and entry.date > until:
+            continue
+        kept.append(entry)
+    return kept
+
+
+def _range_from_args(args, default_window: str) -> tuple[str | None, str | None]:
+    """Resolve --window/--from/--to; the default applies only when none is given."""
+    date_from = getattr(args, "date_from", None)
+    date_to = getattr(args, "date_to", None)
+    window = getattr(args, "window", None) or (
+        None if (date_from or date_to) else default_window
+    )
+    since, until = parse_window(window) if window else (None, None)
+    if date_from:
+        since = parse_date(date_from).isoformat()
+    if date_to:
+        until = parse_date(date_to).isoformat()
+    return since, until
+
+
+def _bounded_range(entries: list[Entry], since: str | None,
+                   until: str | None) -> tuple[str, str]:
+    """Fill in an open-ended range: today at the top, the first entry at the bottom."""
+    until = until or today().isoformat()
+    if not since:
+        dates = sorted(e.date for e in entries if e.date)
+        since = dates[0] if dates else until
+    return since, until
+
+
+def summaries_dir(store: Path) -> Path:
+    return store / "outputs" / "summaries"
+
+
+def summary_path(store: Path, period: dict) -> Path:
+    return summaries_dir(store) / f"{period['label']}.md"
+
+
+def profile_competencies(store: Path) -> list[str]:
+    """Competencies the user listed in profile.md, ignoring template placeholders."""
+    profile = store / "profile.md"
+    if not profile.is_file():
+        return []
+    try:
+        text = profile.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    items, inside = [], False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            # "Competencies", "Core competencies" and "Competências" all count.
+            heading = unicodedata.normalize("NFKD", stripped.lower())
+            inside = "competenc" in heading.encode("ascii", "ignore").decode("ascii")
+            continue
+        if not inside or not stripped.startswith("- "):
+            continue
+        value = re.sub(r"<!--.*?-->", "", stripped[2:], flags=re.S).strip()
+        if value:
+            items.append(value)
+    return items
+
+
+def _haystack(entry: Entry) -> str:
+    return " ".join([
+        entry.title,
+        entry.body,
+        str(entry.meta.get("project") or ""),
+        " ".join(entry.field_list("tags")),
+        " ".join(entry.field_list("skills")),
+    ]).lower()
+
+
+def _covers(entry: Entry, phrase: str) -> bool:
+    haystack = _haystack(entry)
+    if phrase.lower() in haystack:
+        return True
+    words = tokens(phrase)
+    return bool(words) and all(word in haystack for word in words)
+
+
+def quiet_periods(confirmed: list[Entry], since: str | None, until: str | None,
+                  min_weeks: int = 2) -> list[dict]:
+    """Completed weeks inside the range with nothing recorded, merged into stretches.
+
+    Only weeks after the first entry count: the user's record cannot have a hole
+    before it starts.
+    """
+    dates = sorted(e.date for e in confirmed if e.date)
+    if not dates:
+        return []
+    try:
+        first = dt.date.fromisoformat(dates[0])
+    except ValueError:
+        return []
+    now = today()
+    start = max(dt.date.fromisoformat(since), first) if since else first
+    end = min(dt.date.fromisoformat(until), now) if until else now
+
+    recorded = {e.date for e in confirmed}
+    current_week_start, _ = week_range(now)
+    week_start, week_end = week_range(start)
+    if week_start < start:  # only judge weeks that lie fully inside the range
+        week_start += dt.timedelta(days=7)
+        week_end += dt.timedelta(days=7)
+
+    quiet: list[tuple[dt.date, dt.date]] = []
+    while week_end <= end and week_start < current_week_start:
+        days = {(week_start + dt.timedelta(days=i)).isoformat() for i in range(7)}
+        if not (days & recorded):
+            quiet.append((week_start, week_end))
+        week_start += dt.timedelta(days=7)
+        week_end += dt.timedelta(days=7)
+
+    stretches: list[dict] = []
+    for start_day, end_day in quiet:
+        if stretches and stretches[-1]["_end"] + dt.timedelta(days=1) == start_day:
+            stretches[-1]["_end"] = end_day
+            stretches[-1]["weeks"] += 1
+        else:
+            stretches.append({"_start": start_day, "_end": end_day, "weeks": 1})
+    return [
+        {"since": s["_start"].isoformat(), "until": s["_end"].isoformat(),
+         "weeks": s["weeks"]}
+        for s in stretches if s["weeks"] >= min_weeks
+    ]
+
+
+def collect_gaps(store: Path, entries: list[Entry], since: str | None,
+                 until: str | None, stale_days: int = 14, quiet_weeks: int = 2,
+                 kinds: list[str] | None = None,
+                 project: str | None = None) -> list[dict]:
+    wanted = list(kinds or GAP_KINDS)
+    confirmed, candidates = split_by_status(entries)
+    if project:
+        confirmed = [e for e in confirmed if e.meta.get("project") == project]
+        candidates = [e for e in candidates if e.meta.get("project") == project]
+    scoped = in_range(confirmed, since, until)
+    gaps: list[dict] = []
+
+    def record(kind, subject, fix, detail="", date="", entry_id=""):
+        gaps.append({"kind": kind, "id": entry_id, "subject": subject,
+                     "detail": detail, "fix": fix, "date": date})
+
+    if "no-evidence" in wanted:
+        for entry in scoped:
+            if not entry_evidence(entry):
+                record("no-evidence", entry.title,
+                       f"update {entry.id} --add-evidence 'github_pr:#…'",
+                       date=entry.date, entry_id=entry.id)
+
+    if "no-impact" in wanted:
+        for entry in scoped:
+            statement, _ = entry_impact(entry)
+            if not statement:
+                record("no-impact", entry.title,
+                       f'update {entry.id} --set-impact "…"',
+                       date=entry.date, entry_id=entry.id)
+
+    if "unverified-impact" in wanted:
+        for entry in scoped:
+            statement, confidence = entry_impact(entry)
+            if statement and confidence in ("inferred", "uncertain"):
+                record("unverified-impact", entry.title,
+                       f'update {entry.id} --set-impact "…" --impact-confidence factual',
+                       detail=f"recorded as {confidence}: {statement}",
+                       date=entry.date, entry_id=entry.id)
+
+    if "stale-candidate" in wanted:
+        now = today()
+        for entry in in_range(candidates, since, until):
+            try:
+                age = (now - dt.date.fromisoformat(entry.date)).days
+            except ValueError:
+                continue
+            if age >= stale_days:
+                record("stale-candidate", f"{entry.title} ({age} days old)",
+                       f"promote {entry.id}   # or: dismiss {entry.id}",
+                       date=entry.date, entry_id=entry.id)
+
+    if "quiet-period" in wanted:
+        for stretch in quiet_periods(confirmed, since, until, quiet_weeks):
+            record("quiet-period", f"{stretch['since']} → {stretch['until']}",
+                   f"github discover --from {stretch['since']} --to {stretch['until']}",
+                   detail=f"{stretch['weeks']} consecutive weeks with nothing recorded",
+                   date=stretch["since"])
+
+    if "uncovered-competency" in wanted:
+        for competency in profile_competencies(store):
+            if not any(_covers(entry, competency) for entry in scoped):
+                record("uncovered-competency", competency, f'search "{competency}"',
+                       detail="listed in profile.md, nothing in this window mentions it")
+
+    order = {kind: index for index, kind in enumerate(GAP_KINDS)}
+    gaps.sort(key=lambda g: (order.get(g["kind"], 99), g["date"] or "", g["subject"]),
+              reverse=False)
+    return gaps
+
+
+def summary_data(store: Path, entries: list[Entry], since: str | None,
+                 until: str | None, project: str | None = None,
+                 limit: int = 0) -> dict:
+    confirmed, candidates = split_by_status(entries)
+    if project:
+        confirmed = [e for e in confirmed if e.meta.get("project") == project]
+        candidates = [e for e in candidates if e.meta.get("project") == project]
+
+    period = classify_period(since, until)
+    scoped = in_range(confirmed, since, until)
+
+    previous_since, previous_until = previous_range(period, since, until)
+    previous = in_range(confirmed, previous_since, previous_until)
+    previous_period = classify_period(previous_since, previous_until)
+
+    projects_now = {str(e.meta.get("project")) for e in scoped if e.meta.get("project")}
+    projects_before = {str(e.meta.get("project")) for e in previous if e.meta.get("project")}
+
+    listed = scoped[:limit] if limit else scoped
+    rows = []
+    for entry in listed:
+        statement, confidence = entry_impact(entry)
+        rows.append({
+            "id": entry.id,
+            "date": entry.date,
+            "type": entry.meta.get("type") or "",
+            "project": entry.meta.get("project") or "",
+            "title": entry.title,
+            "evidence": evidence_refs(entry),
+            "impact": statement,
+            "impact_confidence": confidence,
+        })
+
+    return {
+        "period": period,
+        "since": since,
+        "until": until,
+        "project": project,
+        "count": len(scoped),
+        "by_type": tally(scoped, lambda e: [e.meta.get("type")]),
+        "by_project": tally(scoped, lambda e: [e.meta.get("project")]),
+        "skills": tally(scoped, lambda e: e.field_list("skills")),
+        "tags": tally(scoped, lambda e: e.field_list("tags")),
+        "people": tally(scoped, lambda e: e.field_list("people")),
+        "entries": rows,
+        "truncated": len(scoped) - len(listed),
+        "with_evidence": sum(1 for e in scoped if entry_evidence(e)),
+        "with_impact": sum(1 for e in scoped if entry_impact(e)[0]),
+        "without_evidence": [e.id for e in scoped if not entry_evidence(e)],
+        "without_impact": [e.id for e in scoped if not entry_impact(e)[0]],
+        "previous": {
+            "period": previous_period,
+            "since": previous_since,
+            "until": previous_until,
+            "count": len(previous),
+        },
+        "new_projects": sorted(projects_now - projects_before),
+        "quiet_projects": sorted(projects_before - projects_now),
+        "pending_candidates": [
+            {"id": e.id, "date": e.date, "title": e.title}
+            for e in in_range(candidates, since, until)
+        ],
+        "output_path": str(summary_path(store, period)),
+    }
+
+
+def _print_tally(label: str, rows: list[tuple[str, int]], top: int = 8) -> None:
+    if not rows:
+        return
+    print(f"\n{label}:")
+    for name, count in rows[:top]:
+        print(f"  {count:>3}  {name}")
+
+
+def print_summary_table(data: dict) -> None:
+    period = data["period"]
+    header = period["title"]
+    if period["kind"] != "range":  # a range already reads as its own dates
+        header += f"  ({data['since']} → {data['until']})"
+    print(header)
+    if data["project"]:
+        print(f"project: {data['project']}")
+
+    previous = data["previous"]
+    delta = data["count"] - previous["count"]
+    line = f"\n{entry_count(data['count'])} recorded"
+    if previous["since"]:
+        line += (f"  (previous period {previous['period']['label']}: "
+                 f"{previous['count']}, {delta:+d})")
+    print(line)
+
+    if not data["count"]:
+        print("\nNothing was recorded in this period. That is a fact about the "
+              "record, not about the work — check `github discover` for the same "
+              "window before concluding the period was quiet.")
+        return
+
+    _print_tally("By type", data["by_type"])
+    _print_tally("By project", data["by_project"])
+    _print_tally("Recurring skills", data["skills"])
+    _print_tally("Recurring tags", data["tags"])
+    _print_tally("Worked with", data["people"])
+
+    print("\nEntries:")
+    for row in data["entries"]:
+        bits = [row["date"], f"[{row['type'] or '?'}]"]
+        if row["project"]:
+            bits.append(f"({row['project']})")
+        bits.append(row["title"])
+        print("  " + "  ".join(bits))
+        if row["evidence"]:
+            print("      evidence: " + ", ".join(row["evidence"]))
+    if data["truncated"]:
+        print(f"  … and {data['truncated']} more")
+
+    if data["new_projects"]:
+        print("\nFirst appearance this period: " + ", ".join(data["new_projects"]))
+    if data["quiet_projects"]:
+        print("Nothing recorded this period for: " + ", ".join(data["quiet_projects"]))
+
+    print(f"\nEvidence attached: {data['with_evidence']}/{data['count']}")
+    print(f"Impact documented: {data['with_impact']}/{data['count']}")
+
+    if data["without_evidence"] or data["without_impact"] or data["pending_candidates"]:
+        print("\nNeeds attention:")
+        if data["without_evidence"]:
+            print(f"  {len(data['without_evidence'])} without evidence: "
+                  + ", ".join(data["without_evidence"][:5]))
+        if data["without_impact"]:
+            print(f"  {len(data['without_impact'])} without a documented impact: "
+                  + ", ".join(data["without_impact"][:5]))
+        if data["pending_candidates"]:
+            print(f"  {len(data['pending_candidates'])} candidate(s) awaiting "
+                  f"confirmation: "
+                  + ", ".join(c["id"] for c in data["pending_candidates"][:5]))
+
+    print(f"\nSuggested output: {data['output_path']}")
+
+
+def print_summary_markdown(data: dict) -> None:
+    period = data["period"]
+    kind = {"week": "Weekly", "month": "Monthly"}.get(period["kind"], "Period")
+    heading = f"# {kind} summary — {period['title']}"
+    if period["kind"] != "range":
+        heading += f" ({data['since']} → {data['until']})"
+    print(heading)
+    print()
+    print("<!-- Facts below come from recorded entries. Do not add anything that "
+          "is not in the record. -->")
+
+    if not data["count"]:
+        print("\nNo entries were recorded in this period.")
+        print(f"\n_Suggested path: {data['output_path']}_")
+        return
+
+    print("\n## What happened\n")
+    for row in data["entries"]:
+        head = f"- **{row['date']}** · {row['type'] or 'entry'}"
+        if row["project"]:
+            head += f" · {row['project']}"
+        print(f"{head} — {row['title']}")
+        if row["evidence"]:
+            print(f"  - Evidence: {', '.join(row['evidence'])}")
+        if row["impact"]:
+            confidence = f" ({row['impact_confidence']})" if row["impact_confidence"] else ""
+            print(f"  - Impact: {row['impact']}{confidence}")
+        else:
+            print("  - Impact: not documented")
+    if data["truncated"]:
+        print(f"- … and {data['truncated']} more")
+
+    if data["by_type"] or data["skills"]:
+        print("\n## Themes\n")
+        for name, count in data["by_type"][:6]:
+            print(f"- {name}: {entry_count(count)}")
+        for name, count in data["skills"][:6]:
+            print(f"- {name}: {entry_count(count)} (interpretation)")
+
+    previous = data["previous"]
+    if previous["since"]:
+        print(f"\n## Compared with {previous['period']['label']}\n")
+        print(f"- {entry_count(data['count'])} recorded, against "
+              f"{previous['count']} in the previous period.")
+        if data["new_projects"]:
+            print("- First appearance this period: " + ", ".join(data["new_projects"]))
+        if data["quiet_projects"]:
+            print("- Nothing recorded this period for: "
+                  + ", ".join(data["quiet_projects"]))
+
+    print("\n## Evidence health\n")
+    print(f"- Evidence attached: {data['with_evidence']}/{data['count']}")
+    print(f"- Impact documented: {data['with_impact']}/{data['count']}")
+    for label, ids in (("No evidence", data["without_evidence"]),
+                       ("No documented impact", data["without_impact"])):
+        if ids:
+            print(f"- {label}: {', '.join(ids)}")
+    if data["pending_candidates"]:
+        print("- Awaiting your confirmation: "
+              + ", ".join(c["id"] for c in data["pending_candidates"]))
+
+    print(f"\n_Suggested path: {data['output_path']}_")
+
+
+def cmd_summary(args) -> int:
+    store = require_store(resolve_store(args.dir))
+    if args.period and not (args.window or args.date_from or args.date_to):
+        args.window = "this-week" if args.period == "week" else "this-month"
+    entries = load_entries(store, include_candidates=True)
+    since, until = _bounded_range(entries, *_range_from_args(args, "this-week"))
+    data = summary_data(store, entries, since, until, args.project, args.limit)
+
+    if args.format == "json":
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    elif args.format == "markdown":
+        print_summary_markdown(data)
+    else:
+        print_summary_table(data)
+    return 0
+
+
+def cmd_gaps(args) -> int:
+    store = require_store(resolve_store(args.dir))
+    entries = load_entries(store, include_candidates=True)
+    since, until = _bounded_range(entries, *_range_from_args(args, "6m"))
+    gaps = collect_gaps(store, entries, since, until, stale_days=args.stale_days,
+                        quiet_weeks=args.quiet_weeks, kinds=args.kind,
+                        project=args.project)
+    total = len(gaps)
+    if args.limit:
+        gaps = gaps[: args.limit]
+
+    if args.format == "json":
+        print(json.dumps(gaps, indent=2, ensure_ascii=False))
+        return 0
+
+    confirmed, _ = split_by_status(entries)
+    scoped = in_range(confirmed, since, until)
+    print(f"Gaps in the record  ({since} → {until}, {entry_count(len(scoped))})")
+    if not gaps:
+        print("\nNothing missing in this window.")
+        return 0
+
+    for kind in GAP_KINDS:
+        group = [g for g in gaps if g["kind"] == kind]
+        if not group:
+            continue
+        print(f"\n{GAP_LABEL[kind]} ({len(group)})")
+        for gap in group:
+            prefix = f"  {gap['date']}  " if gap["date"] else "  "
+            print(f"{prefix}{gap['subject']}")
+            if gap["detail"] and gap["detail"] != gap["subject"]:
+                print(f"      {gap['detail']}")
+            print(f"      fix: {gap['fix']}")
+
+    shown = f"{len(gaps)} of {total}" if len(gaps) != total else str(total)
+    print(f"\n{shown} gap(s). Each one is something the record cannot prove yet — "
+          f"ask the user, do not fill it in.")
+    return 0
+
+
+def summaries_due(store: Path, confirmed: list[Entry], weeks: int = 4,
+                  months: int = 2) -> list[dict]:
+    """Finished weeks and months that hold entries but were never summarised."""
+    written = set()
+    for directory in (summaries_dir(store), store / "outputs"):
+        if directory.is_dir():
+            written.update(path.stem for path in directory.glob("*.md"))
+
+    def already(label: str) -> bool:
+        return any(stem == label or stem.startswith(label) for stem in written)
+
+    dates = [e.date for e in confirmed if e.date]
+    now = today()
+    due: list[dict] = []
+
+    monday, _ = week_range(now)
+    for index in range(1, weeks + 1):
+        start = monday - dt.timedelta(weeks=index)
+        end = start + dt.timedelta(days=6)
+        label = iso_week_label(start)
+        count = sum(1 for d in dates if start.isoformat() <= d <= end.isoformat())
+        if count and not already(label):
+            due.append({"kind": "week", "label": label, "since": start.isoformat(),
+                        "until": end.isoformat(), "entries": count})
+
+    cursor = now.replace(day=1)
+    for _ in range(months):
+        end = cursor - dt.timedelta(days=1)
+        start = end.replace(day=1)
+        label = month_label(start)
+        count = sum(1 for d in dates if start.isoformat() <= d <= end.isoformat())
+        if count and not already(label):
+            due.append({"kind": "month", "label": label, "since": start.isoformat(),
+                        "until": end.isoformat(), "entries": count})
+        cursor = start
+    return due
+
+
+def _checkup_github(store: Path, entries: list[Entry], days: int) -> dict:
+    """Uncaptured GitHub signals, best effort: no access is not an error here."""
+    gh = github_module()
+    since, until = parse_window(f"{days}d")
+    try:
+        client = gh.Client(backend="auto")
+        login = client.login()
+        signals = gh.discover(client, login, since, until, kinds=list(gh.DEFAULT_KINDS))
+    except gh.GitHubError as exc:
+        return {"available": False, "reason": str(exc), "days": days}
+    captured = evidence_index(store, entries)
+    fresh = [s for s in signals
+             if gh.normalise_reference(s["ref"]) not in captured]
+    return {
+        "available": True,
+        "login": login,
+        "days": days,
+        "total": len(signals),
+        "new": [{"ref": s["ref"], "kind": s["kind"], "date": s.get("date"),
+                 "title": s.get("title")} for s in fresh],
+    }
+
+
+def checkup_data(args, store: Path, entries: list[Entry]) -> dict:
+    confirmed, candidates = split_by_status(entries)
+    dates = sorted(e.date for e in confirmed if e.date)
+    now = today()
+
+    def count_window(window: str) -> int:
+        since, until = parse_window(window)
+        return len(in_range(confirmed, since, until))
+
+    last_entry = confirmed[0] if confirmed else None
+    days_since = None
+    if dates:
+        try:
+            days_since = (now - dt.date.fromisoformat(dates[-1])).days
+        except ValueError:
+            days_since = None
+
+    aged = []
+    for candidate in candidates:
+        try:
+            age = (now - dt.date.fromisoformat(candidate.date)).days
+        except ValueError:
+            age = None
+        aged.append({"id": candidate.id, "date": candidate.date, "age": age,
+                     "title": candidate.title})
+    aged.sort(key=lambda c: (c["age"] is None, -(c["age"] or 0)))
+
+    since, until = _bounded_range(entries, *_range_from_args(args, "6m"))
+    gaps = collect_gaps(store, entries, since, until, stale_days=args.stale_days,
+                        quiet_weeks=args.quiet_weeks)
+    counts: dict[str, int] = {}
+    for gap in gaps:
+        counts[gap["kind"]] = counts.get(gap["kind"], 0) + 1
+    gap_counts = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    data = {
+        "store": str(store),
+        "total": len(confirmed),
+        "span": [dates[0], dates[-1]] if dates else [],
+        "last_entry": {
+            "id": last_entry.id, "date": last_entry.date, "title": last_entry.title,
+        } if last_entry else None,
+        "days_since_last": days_since,
+        "cadence": {
+            "this_week": count_window("this-week"),
+            "last_week": count_window("last-week"),
+            "this_month": count_window("this-month"),
+            "last_month": count_window("last-month"),
+        },
+        "summaries_due": summaries_due(store, confirmed, args.weeks, args.months),
+        "candidates": aged,
+        "gap_window": [since, until],
+        "gap_counts": gap_counts,
+        "gap_total": len(gaps),
+    }
+    if getattr(args, "github", False):
+        data["github"] = _checkup_github(store, entries, args.github_days)
+    return data
+
+
+def print_checkup(data: dict) -> None:
+    print(f"Career Memory checkup  ({data['store']})")
+    if data["span"]:
+        print(f"  {entry_count(data['total'])}  ({data['span'][0]} → {data['span'][1]})")
+    else:
+        print("  no confirmed entries yet")
+
+    print("\nLast capture:")
+    if data["last_entry"]:
+        days = data["days_since_last"]
+        ago = "today" if days == 0 else f"{days} day{'s' if days != 1 else ''} ago"
+        print(f"  {data['last_entry']['date']} ({ago}) — {data['last_entry']['title']}")
+    else:
+        print("  nothing recorded yet — `add` the first thing the user mentions")
+
+    cadence = data["cadence"]
+    print("\nCadence:")
+    print(f"  this week: {cadence['this_week']}   last week: {cadence['last_week']}")
+    print(f"  this month: {cadence['this_month']}   last month: {cadence['last_month']}")
+
+    print("\nSummaries not written yet:")
+    if data["summaries_due"]:
+        for item in data["summaries_due"]:
+            print(f"  {item['kind']:<5} {item['label']}  "
+                  f"({item['since']} → {item['until']}, {entry_count(item['entries'])})")
+    else:
+        print("  none due")
+
+    print("\nCandidates awaiting confirmation:")
+    if data["candidates"]:
+        for candidate in data["candidates"][:5]:
+            age = f"{candidate['age']} days old" if candidate["age"] is not None else "undated"
+            print(f"  {candidate['id']}  ({age})")
+        if len(data["candidates"]) > 5:
+            print(f"  … and {len(data['candidates']) - 5} more")
+    else:
+        print("  none")
+
+    window = data["gap_window"]
+    print(f"\nGaps ({window[0]} → {window[1]}):")
+    if data["gap_counts"]:
+        for kind, count in data["gap_counts"]:
+            print(f"  {count:>3}  {GAP_LABEL.get(kind, kind)}")
+        print("  details: `gaps`")
+    else:
+        print("  none")
+
+    github = data.get("github")
+    if github is not None:
+        print(f"\nGitHub (last {github['days']} days):")
+        if not github["available"]:
+            print(f"  unavailable — {github['reason']}")
+        elif github["new"]:
+            print(f"  {len(github['new'])} signal(s) not in the record yet, "
+                  f"of {github['total']} found:")
+            for signal in github["new"][:5]:
+                print(f"    {signal['ref']}  {signal['date']}  {signal['title']}")
+            print("  import them with `github import` after showing the user")
+        else:
+            print(f"  nothing new ({github['total']} signal(s), all recorded)")
+
+    print("\nNext:")
+    actions = []
+    for item in data["summaries_due"][:2]:
+        actions.append(f"summary --from {item['since']} --to {item['until']} "
+                       f"--format markdown   # {item['label']}")
+    if data["candidates"]:
+        actions.append(f"promote {data['candidates'][0]['id']}   # or dismiss")
+    if github and github.get("new"):
+        actions.append(f"github discover --window {github['days']}d   "
+                       f"# show the user before importing")
+    if data["gap_total"]:
+        actions.append("gaps   # then ask the user, one gap at a time")
+    if not actions:
+        actions.append("nothing pending — the record is up to date")
+    for action in actions:
+        print(f"  {action}")
+
+
+def cmd_checkup(args) -> int:
+    store = require_store(resolve_store(args.dir))
+    entries = load_entries(store, include_candidates=True)
+    data = checkup_data(args, store, entries)
+    if args.format == "json":
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return 0
+    print_checkup(data)
+    return 0
+
+
 STORE_README = """# Career Memory
 
 This directory is your professional memory. It is plain Markdown — readable,
@@ -1315,6 +2135,7 @@ editable and portable without any agent.
 - `feedback/` — feedback received
 - `projects/` — per-project context
 - `outputs/` — generated documents (brag, review, promotion case, daily)
+- `outputs/summaries/` — weekly and monthly summaries, one file per period
 
 Everything here is yours. Put it in a private git repository if you want history.
 """
@@ -1429,6 +2250,48 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("stats", help="counts and recurring themes")
     add_filter_args(p)
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("summary", help="what a week or a month actually holds")
+    p.add_argument("--period", choices=["week", "month"],
+                   help="shorthand for --window this-week / this-month")
+    p.add_argument("--window",
+                   help="this-week, last-week, this-month, last-month, 30d")
+    p.add_argument("--from", dest="date_from", help="YYYY-MM-DD")
+    p.add_argument("--to", dest="date_to", help="YYYY-MM-DD")
+    p.add_argument("--project")
+    p.add_argument("--limit", type=int, default=0, help="cap the entry listing")
+    p.add_argument("--format", choices=["table", "markdown", "json"], default="table")
+    p.set_defaults(func=cmd_summary)
+
+    p = sub.add_parser("gaps", help="what the record cannot prove yet")
+    p.add_argument("--window", help="default: 6m")
+    p.add_argument("--from", dest="date_from", help="YYYY-MM-DD")
+    p.add_argument("--to", dest="date_to", help="YYYY-MM-DD")
+    p.add_argument("--project")
+    p.add_argument("--kind", action="append", choices=list(GAP_KINDS),
+                   help="restrict to one gap kind, repeatable")
+    p.add_argument("--stale-days", type=int, default=14,
+                   help="age at which a pending candidate is worth raising")
+    p.add_argument("--quiet-weeks", type=int, default=2,
+                   help="consecutive empty weeks before a quiet period is reported")
+    p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--format", choices=["table", "json"], default="table")
+    p.set_defaults(func=cmd_gaps)
+
+    p = sub.add_parser("checkup",
+                       help="summaries due, pending candidates and gaps, in one look")
+    p.add_argument("--weeks", type=int, default=4, help="how many finished weeks to check")
+    p.add_argument("--months", type=int, default=2, help="how many finished months to check")
+    p.add_argument("--window", help="window for the gap counts (default: 6m)")
+    p.add_argument("--from", dest="date_from", help="YYYY-MM-DD")
+    p.add_argument("--to", dest="date_to", help="YYYY-MM-DD")
+    p.add_argument("--stale-days", type=int, default=14)
+    p.add_argument("--quiet-weeks", type=int, default=2)
+    p.add_argument("--github", action="store_true",
+                   help="also look for GitHub activity that is not in the record")
+    p.add_argument("--github-days", type=int, default=7)
+    p.add_argument("--format", choices=["table", "json"], default="table")
+    p.set_defaults(func=cmd_checkup)
 
     p = sub.add_parser("validate", help="check every file against the schema")
     p.set_defaults(func=cmd_validate)
