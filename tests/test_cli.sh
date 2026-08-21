@@ -63,6 +63,11 @@ check "add writes an entry" "Recorded:" run add "Resolved payment race condition
   --body "Fixed a race condition in payment processing."
 check_status "entry file exists" 0 test -f "$WORK/store/entries/$TODAY-resolved-payment-race-condition.md"
 
+check "bare relative date resolves" "date: $YESTERDAY" run add "Relative date entry" \
+  --date 1d --type learning --id relative-date-entry
+check "show confirms the relative date" "date: $YESTERDAY" run show relative-date-entry
+check "an unusable date is rejected clearly" "unrecognised date" run add "Bad date" --date "ontem-ish"
+
 check "add reports missing impact" "impact: not documented" run add "Shipped the new dashboard" \
   --date "$YESTERDAY" --type delivery --project dashboard
 

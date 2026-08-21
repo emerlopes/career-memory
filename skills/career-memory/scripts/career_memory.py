@@ -380,13 +380,13 @@ def parse_date(value: str | None) -> dt.date:
         return today()
     if value in ("yesterday", "ontem"):
         return today() - dt.timedelta(days=1)
-    match = re.fullmatch(r"-(\d+)([dwmy])", value)
+    match = re.fullmatch(r"-?(\d+)([dwmy])", value)
     if match:
         return shift(today(), int(match.group(1)), match.group(2))
     try:
         return dt.date.fromisoformat(value)
     except ValueError:
-        die(f"unrecognised date: {value!r} (use YYYY-MM-DD, today, yesterday, -7d)")
+        die(f"unrecognised date: {value!r} (use YYYY-MM-DD, today, yesterday, or 7d for 7 days ago)")
 
 
 def shift(base: dt.date, amount: int, unit: str) -> dt.date:
@@ -1375,7 +1375,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("add", help="write a new entry")
     p.add_argument("title")
     p.add_argument("--body", default="", help="Markdown body, or - to read stdin")
-    p.add_argument("--date", help="YYYY-MM-DD, today, yesterday, -3d")
+    p.add_argument("--date", help="YYYY-MM-DD, today, yesterday, or 3d for 3 days ago")
     p.add_argument("--type", help=f"one of: {', '.join(ENTRY_TYPES)}")
     p.add_argument("--project")
     p.add_argument("--tags", help="comma separated")
