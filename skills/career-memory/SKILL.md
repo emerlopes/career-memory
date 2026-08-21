@@ -11,10 +11,14 @@ description: >-
   self-review/promotion case/CV bullets/STAR interview stories, or say things
   like "save this", "remember this", "add to my career memory", "what did I do
   this week/quarter", "prepare my daily", "o que eu fiz essa semana", "prepara
-  minha daily", "avaliação de desempenho", "caso de promoção".
+  minha daily", "avaliação de desempenho", "caso de promoção". Also use it to
+  turn GitHub activity into evidence — when they ask what they shipped, mention
+  a PR, issue, review or commit, or say "import my PRs", "check my GitHub",
+  "link this PR to my career memory", "importa minhas PRs", "o que eu mergeei
+  esse mês".
 license: MIT
 metadata:
-  version: 0.1.0
+  version: 0.2.0
 ---
 
 # Career Memory
@@ -85,6 +89,10 @@ those parts exactly; you do the judgment.
 | Confirm a candidate     | `python3 "$CM" promote <id>`                                                    |
 | Themes and gaps         | `python3 "$CM" stats --window 6m`                                               |
 | Schema check            | `python3 "$CM" validate`                                                        |
+| GitHub access check     | `python3 "$CM" github check`                                                    |
+| GitHub activity         | `python3 "$CM" github discover --window 7d`                                     |
+| GitHub → candidates     | `python3 "$CM" github import --window 7d`                                       |
+| Attach a PR to an entry | `python3 "$CM" github link <id> <url or owner/repo#123>`                        |
 
 `add` refuses to write when it finds a similar recent entry and prints the
 matches — that is the duplicate check doing its job. Read them: usually the
@@ -153,6 +161,38 @@ blockers, say "No blockers" rather than inventing a risk. Full guidance:
 
 Dailies also surface capture opportunities: when the user mentions finishing
 something that is not in the store yet, offer to save it.
+
+## GitHub
+
+The user's PRs, issues, reviews and commits are evidence they already produced.
+Discovery is read-only, and everything it finds arrives as a **candidate** —
+GitHub supplies the reference, the user supplies the meaning.
+
+```bash
+python3 "$CM" github discover --window 7d      # show what is there, and what is already recorded
+python3 "$CM" github import --window 7d        # write the new ones to candidates/
+python3 "$CM" github link <entry-id> <url>     # attach a PR to an entry you already wrote
+```
+
+Discovery needs the `gh` CLI (`gh auth login`) or `$GITHUB_TOKEN`. Exit code 3
+means GitHub is unreachable or unauthenticated — say so plainly; nothing else in
+the skill depends on it.
+
+Three habits matter more than the commands:
+
+- **Show before you write.** Run `discover`, put the list in front of the user,
+  import what they point at. Importing a quarter unattended produces a pile of
+  candidates nobody will ever read.
+- **Never promote a discovered signal on your own.** `import` writes candidates
+  and cannot write anything else. Confirmation is the user's, one `promote` at a
+  time.
+- **Ask the question GitHub cannot answer.** A merged PR title is a bookmark.
+  "What did this change for anyone?" turns it into evidence — record the answer
+  with `update --set-impact`, and leave it undocumented when there is none.
+
+A merged PR means merged, not successful; lines changed are not impact. When the
+user mentions a PR number in passing, `github link` it to the entry rather than
+letting a second entry appear. Full guidance: `references/github.md`.
 
 ## Retrieval
 

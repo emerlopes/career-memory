@@ -21,7 +21,9 @@ people:
   - João
 evidence:
   - type: github_pr
-    reference: "#1234"
+    reference: "acme/payments#1234" # or "#1234" when the repository is obvious
+    url: https://github.com/acme/payments/pull/1234 # optional
+    title: Serialise payment capture # optional, as it reads on GitHub
   - type: metric
     reference: "API latency dashboard"
     value: "800ms → 300ms"
@@ -32,6 +34,9 @@ context: The issue was intermittent and hard to reproduce
 source: slack # where the user told you, optional
 ---
 ```
+
+Entries imported from GitHub use `<date>-<kind>-<owner>-<repo>-<number>` as the
+id (`2026-08-20-pr-acme-payments-1234`) and carry `source: github`.
 
 Only `id` and `date` are structurally required. Everything else is omitted when
 unknown — an absent field is honest, an empty guess is not.
@@ -55,17 +60,27 @@ other in `tags`.
 
 ## Evidence types
 
-`github_pr`, `github_issue`, `github_commit`, `document`, `metric`,
-`dashboard`, `feedback`, `email`, `slack_message`, `meeting`, `ticket`,
-`external_link`
+`github_pr`, `github_issue`, `github_review`, `github_commit`, `document`,
+`metric`, `dashboard`, `feedback`, `email`, `slack_message`, `meeting`,
+`ticket`, `external_link`
+
+GitHub evidence carries `url` and `title` alongside `reference` when the skill
+knows them — `github link` and `github import` fill all three. Anything that
+resolves to the same pull request, issue or commit counts as one reference,
+whether it was written as a URL or as `owner/repo#123`.
 
 CLI form is `type:reference[:value]`:
 
 ```bash
 --evidence 'github_pr:#1234'
+--evidence 'github_pr:https://github.com/acme/payments/pull/1234'
 --evidence 'metric:API latency dashboard:800ms → 300ms'
 --evidence 'meeting:Q3 planning review'
 ```
+
+A URL is kept whole; anything else splits on the next colon into a value.
+For GitHub references, `github link <entry-id> <url>` is better than
+`--evidence`: it resolves the kind, fetches the title and refuses duplicates.
 
 Good evidence is specific, attributable and traceable — something the user could
 show a skeptical manager. "A PR" is not evidence; "PR #1234" is.

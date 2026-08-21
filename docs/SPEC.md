@@ -1282,6 +1282,32 @@ Example future workflow:
 
 The system should always ask before turning automatically discovered signals into confirmed career entries.
 
+## Implemented in v0.2
+
+Discovery reads pull requests, issues, reviews and commits for the authenticated
+user, through the `gh` CLI or a read-only token. It is read-only in both
+directions that matter: nothing is written to GitHub, and nothing discovered
+becomes a confirmed entry.
+
+```text
+GitHub activity
+    ↓  github discover      (listed, marked against what is already recorded)
+    ↓  github import        (written to candidates/ only)
+    ↓  user confirms        (promote / dismiss)
+Career Memory
+```
+
+Evidence already attached to an entry is recognised whether it was recorded as a
+URL or as `owner/repo#123`, so re-running discovery never duplicates it. A signal
+that resembles an existing entry is offered as an evidence link (`github link`)
+rather than as a new entry.
+
+GitHub metadata supplies references, never significance: titles, labels, dates
+and states are recorded as facts, and impact stays undocumented until the user
+states it.
+
+Discussions and repository-level signals remain out of scope.
+
 ---
 
 # 47. Telegram Integration

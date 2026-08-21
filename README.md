@@ -126,7 +126,44 @@ Depois, peça o que precisar:
 
 Há slash commands para as mesmas coisas: `/career-memory:career-daily`,
 `career-add`, `career-brag`, `career-review`, `career-promotion`,
-`career-resume`, `career-interview`, `career-search`.
+`career-resume`, `career-interview`, `career-search`, `career-github`.
+
+## GitHub
+
+Seu trabalho já está registrado em algum lugar: PRs, issues, reviews e commits.
+Career Memory lê essa atividade (somente leitura) e transforma em evidência —
+sempre como **candidata**, nunca como registro confirmado sem você dizer.
+
+```text
+/career-memory:career-github last-month
+```
+
+> "o que eu mergeei esse mês?" · "importa minhas PRs da semana" ·
+> "linka a PR #1234 na entrada de ontem"
+
+```bash
+python3 $CM github check                       # verifica o acesso e a conta
+python3 $CM github discover --window 7d        # mostra a atividade e o que já está registrado
+python3 $CM github import --window 7d          # grava as novidades em candidates/
+python3 $CM github link <id> <url-da-pr>       # anexa uma PR a uma entrada existente
+```
+
+Precisa da CLI do GitHub (`gh auth login`) ou de um `GITHUB_TOKEN` de leitura.
+Nada é enviado para lugar nenhum: a descoberta só lê o GitHub e escreve nos seus
+arquivos locais.
+
+O que a descoberta faz e o que ela não faz:
+
+- PRs, issues e reviews entram por padrão; commits só quando você pede
+  (`--kinds commit`) — uma semana de commits não é uma semana de evidências.
+- Uma PR mergeada vira uma entrada `delivery`; uma review vira `collaboration`;
+  uma issue que você abriu vira `problem-solving`. São padrões mecânicos, para
+  você corrigir antes de confirmar.
+- Se a evidência já está registrada, ela é ignorada — reimportar é seguro.
+- Se o sinal se parece com algo que você já contou, ele sugere **linkar** a PR na
+  entrada existente em vez de duplicar.
+- O título da PR é a evidência, não o impacto. `Impact: not documented` continua
+  lá até você dizer o que aquilo mudou.
 
 ## Seus dados
 
@@ -136,7 +173,7 @@ Markdown puro, num diretório que é seu:
 ~/career-memory/
 ├── profile.md          seu cargo, foco e objetivos
 ├── entries/            evidências confirmadas, um arquivo por evento
-├── candidates/         possíveis evidências aguardando sua confirmação
+├── candidates/         possíveis evidências aguardando sua confirmação (inclusive as do GitHub)
 ├── feedback/           feedbacks recebidos
 ├── projects/           contexto por projeto
 └── outputs/            documentos gerados
@@ -165,6 +202,10 @@ python3 $CM list --window last-quarter
 python3 $CM search "confiabilidade" --format full
 python3 $CM stats --window 6m
 python3 $CM validate
+
+python3 $CM github discover --window last-month
+python3 $CM github import --window last-month --dry-run
+python3 $CM github link 2026-08-20-liderei-migracao-4-servicos acme/plataforma#88
 ```
 
 Python 3.9+, apenas biblioteca padrão. PyYAML é usado se estiver disponível, mas
@@ -172,8 +213,8 @@ não é necessário.
 
 ## Roadmap
 
-- **v0.1** — Armazenamento em Markdown, captura, candidatos, busca, brag documents e modo daily _(atual)_
-- **v0.2** — GitHub: descobrir PRs, issues, commits e reviews como evidências candidatas
+- **v0.1** — Armazenamento em Markdown, captura, candidatos, busca, brag documents e modo daily
+- **v0.2** — GitHub: descobrir PRs, issues, commits e reviews como evidências candidatas _(atual)_
 - **v0.3** — Memória proativa: resumos semanais/mensais, detecção de evidências faltantes
 - **v0.4** — Mais interfaces: Telegram, CLI independente, outros agentes
 - **v0.5** — Inteligência de carreira: evolução de competências, análise de lacunas para promoção ao longo do tempo

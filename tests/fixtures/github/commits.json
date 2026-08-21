@@ -1,0 +1,15 @@
+{
+  "total_count": 1,
+  "items": [
+    {
+      "sha": "abc1234def5678",
+      "html_url": "https://github.com/acme/payments/commit/abc1234def5678",
+      "repository": { "full_name": "acme/payments" },
+      "author": { "login": "testuser" },
+      "commit": {
+        "message": "Serialise capture writes\n\nLonger explanation.",
+        "author": { "date": "2026-01-14T12:00:00Z" }
+      }
+    }
+  ]
+}
