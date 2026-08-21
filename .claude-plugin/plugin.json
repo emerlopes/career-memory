@@ -1,0 +1,23 @@
+{
+  "name": "career-memory",
+  "description": "A persistent, factual memory of your professional work \u2014 captured as plain Markdown and turned into brag documents, performance reviews, promotion cases, resume bullets, interview stories and daily standups.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Emerson Lopes",
+    "url": "https://github.com/emerlopes"
+  },
+  "homepage": "https://github.com/emerlopes/career-memory",
+  "repository": "https://github.com/emerlopes/career-memory",
+  "license": "MIT",
+  "keywords": [
+    "career",
+    "memory",
+    "brag-document",
+    "performance-review",
+    "promotion",
+    "standup",
+    "daily",
+    "resume",
+    "interview"
+  ]
+}

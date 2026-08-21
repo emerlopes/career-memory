@@ -1,0 +1,45 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cli:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run CLI smoke tests
+        run: ./tests/test_cli.sh
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate JSON manifests and skill front matter
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, re, sys
+          ok = True
+          for f in pathlib.Path(".claude-plugin").glob("*.json"):
+              json.loads(f.read_text())
+              print(f"{f}: valid JSON")
+          for f in list(pathlib.Path("skills").rglob("SKILL.md")) + sorted(pathlib.Path("commands").glob("*.md")):
+              text = f.read_text()
+              if not text.startswith("---") or text.count("---") < 2:
+                  print(f"{f}: missing front matter"); ok = False
+                  continue
+              if not re.search(r"^description:", text.split("---", 2)[1], re.M):
+                  print(f"{f}: missing description"); ok = False
+                  continue
+              print(f"{f}: front matter present")
+          sys.exit(0 if ok else 1)
+          PY

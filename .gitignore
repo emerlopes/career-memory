@@ -1,0 +1,7 @@
+# A live career memory store, if someone runs `init` inside this repo
+/career-memory/
+
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
