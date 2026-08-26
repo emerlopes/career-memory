@@ -64,9 +64,19 @@ front matter, or an "Interpretation" section), never as something that happened.
 Before you capture, retrieve or generate anything, run this once per session:
 
 ```bash
-CM=$(find "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/career-memory}" -maxdepth 4 -name career_memory.py 2>/dev/null | head -1)
+CM=$(find "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills}" \
+  "$HOME/.copilot/skills" "$HOME/.agents/skills" \
+  .github/skills .claude/skills .agents/skills \
+  -maxdepth 4 -name career_memory.py 2>/dev/null | head -1)
 python3 "$CM" status
 ```
+
+Those are the directories the common hosts install skills into — a Claude Code
+plugin, a personal skill under `~/.claude`, `~/.copilot` or `~/.agents`, or a
+project skill committed to the repository. `find` ignores the ones that do not
+exist, so the same line resolves on every host. If `$CM` comes back empty, the
+skill directory is somewhere else: ask the user where they installed it rather
+than guessing.
 
 `status` is the bootstrap: it creates the store, subdirectories, `profile.md`,
 `README.md` and `config.json` if any are missing — so there is no "not

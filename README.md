@@ -78,6 +78,28 @@ você não consegue defender numa conversa de avaliação — por isso este não
 /plugin install career-memory@emerlopes-plugins
 ```
 
+### GitHub Copilot
+
+O Career Memory é uma Agent Skill no formato padrão, e o Copilot lê esse mesmo
+formato — no Copilot CLI, no coding agent, no VS Code e no JetBrains. Instale
+com o `gh` (v2.90.0+):
+
+```bash
+gh skill install emerlopes/career-memory career-memory --agent github-copilot --scope user
+```
+
+Isso coloca a skill em `~/.copilot/skills/career-memory`, disponível em todos os
+seus projetos. Trocando `--scope user` por `--scope project` ela vai para
+`.agents/skills/` do repositório atual, versionada junto com o código.
+
+O uso é o mesmo de sempre, em linguagem natural — "registra que eu corrigi a
+race condition do pagamento", "prepara minha daily", "o que eu fiz essa semana".
+No VS Code você também pode chamá-la direto: `/career-memory prepara minha daily`.
+
+Os detalhes — slash commands equivalentes, o que muda em cada superfície do
+Copilot e o que ainda não existe lá — estão no
+[manual](docs/MANUAL.md#github-copilot).
+
 ### Qualquer agente que leia `SKILL.md`
 
 Copie o diretório da skill para onde seu agente procura skills:
@@ -87,8 +109,16 @@ git clone https://github.com/emerlopes/career-memory.git
 cp -r career-memory/skills/career-memory ~/.claude/skills/career-memory
 ```
 
+Ou deixe o `gh` resolver o caminho do seu agente — ele conhece Cursor, Codex,
+Gemini CLI, Cline, OpenCode, Warp e outros:
+
+```bash
+gh skill install emerlopes/career-memory career-memory --agent cursor --scope user
+```
+
 A skill é Markdown puro mais um único script Python sem dependências — nada
-aqui é específico do Claude, exceto o caminho de instalação.
+aqui é específico de um fornecedor, nem mesmo o caminho de instalação: a skill
+procura o script nos diretórios que Claude Code, Copilot e os demais usam.
 
 ## Primeiro uso
 

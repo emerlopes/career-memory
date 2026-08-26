@@ -23,7 +23,15 @@ skills/career-memory/
 
 The skill is agent-agnostic by design: Markdown instructions plus one
 standard-library Python script. Nothing depends on a particular provider, and
-the user's data is plain Markdown in a directory they own.
+the user's data is plain Markdown in a directory they own. It is verified on
+Claude Code and GitHub Copilot, and validates against the Agent Skills
+specification (`gh skill publish --dry-run`).
+
+That property has one load-bearing line: the bootstrap in `SKILL.md` that
+resolves `career_memory.py`. It searches every directory the common hosts
+install skills into rather than assuming one. Adding a host means adding a path
+there — never a second code path, and never a host-specific branch in the
+scripts.
 
 `tests/test_cli.sh` covers both scripts; GitHub discovery is exercised offline
 through `tests/fake-gh.sh`, which answers from `tests/fixtures/github/`.

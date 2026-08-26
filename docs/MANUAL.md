@@ -17,6 +17,7 @@ quando precisar.
   - [Instalação](#instalação)
   - [Onde a memória fica](#onde-a-memória-fica)
   - [Três formas de usar](#três-formas-de-usar)
+  - [GitHub Copilot](#github-copilot)
 - [Funcionalidades](#funcionalidades)
   - [0. Setup e configuração](#0-setup-e-configuração)
   - [1. Captura — registrar o que você fez](#1-captura--registrar-o-que-você-fez)
@@ -81,12 +82,24 @@ interpretação — nunca vira fato.
 /plugin install career-memory@emerlopes-plugins
 ```
 
+**GitHub Copilot**
+
+```bash
+gh skill install emerlopes/career-memory career-memory --agent github-copilot --scope user
+```
+
+Detalhes de cada superfície do Copilot em [GitHub Copilot](#github-copilot),
+mais abaixo.
+
 **Qualquer agente que leia `SKILL.md`**
 
 ```bash
 git clone https://github.com/emerlopes/career-memory.git
 cp -r career-memory/skills/career-memory ~/.claude/skills/career-memory
 ```
+
+O `gh skill install` (v2.90.0+) também sabe o caminho de Cursor, Codex, Gemini
+CLI, Cline, OpenCode, Warp e outros — troque o `--agent`.
 
 Requisitos: Python 3.9+ (só biblioteca padrão). O `gh` CLI ou um `GITHUB_TOKEN`
 só são necessários para a parte de GitHub — todo o resto funciona sem.
@@ -114,11 +127,14 @@ python3 $CM where
 Em todos os exemplos deste manual, `$CM` é o caminho do script:
 
 ```bash
-CM=~/.claude/skills/career-memory/scripts/career_memory.py
+CM=~/.claude/skills/career-memory/scripts/career_memory.py     # Claude Code
+CM=~/.copilot/skills/career-memory/scripts/career_memory.py    # GitHub Copilot
 ```
 
-(No Claude Code com o plugin instalado, o caminho fica sob `$CLAUDE_PLUGIN_ROOT`.
-Você não precisa disso para o uso normal — a skill resolve sozinha.)
+(No Claude Code com o plugin instalado, o caminho fica sob `$CLAUDE_PLUGIN_ROOT`;
+com `--scope project` ele fica em `.agents/skills/` do repositório. Você não
+precisa saber disso para o uso normal — a skill procura o script em todos esses
+lugares e resolve sozinha.)
 
 ### Três formas de usar
 
@@ -132,6 +148,114 @@ Toda funcionalidade tem três portas de entrada. Escolha a que couber no momento
    para quando você quer o dado bruto em vez do texto redigido.
 
 As três escrevem nos mesmos arquivos. Não existe estado escondido.
+
+### GitHub Copilot
+
+O Career Memory não tem nada de específico do Claude: é uma Agent Skill no
+formato padrão — um `SKILL.md`, arquivos de referência em Markdown e um script
+Python sem dependências. O Copilot lê esse mesmo formato, então tudo que este
+manual descreve vale lá também.
+
+#### Instalar
+
+```bash
+gh skill install emerlopes/career-memory career-memory --agent github-copilot --scope user
+```
+
+| `--scope`  | Onde a skill fica                     | Alcance                          |
+| ---------- | ------------------------------------- | -------------------------------- |
+| `user`     | `~/.copilot/skills/career-memory`     | Todos os seus projetos           |
+| `project`  | `.agents/skills/career-memory`        | Só este repositório, versionada  |
+
+Para instalar a partir de um clone local, em vez do repositório remoto:
+
+```bash
+gh skill install ~/dev/career-memory --from-local career-memory --agent github-copilot --scope user
+```
+
+Copiar o diretório à mão também funciona — o Copilot procura skills em
+`~/.copilot/skills`, `~/.agents/skills` e `~/.claude/skills` (pessoais) e em
+`.github/skills`, `.claude/skills` e `.agents/skills` (do projeto). Se você já
+tem o Career Memory instalado para o Claude Code em `~/.claude/skills`, o
+Copilot encontra sem você mexer em nada.
+
+#### Onde funciona
+
+| Superfície do Copilot            | Skill carrega | Slash command próprio |
+| -------------------------------- | ------------- | --------------------- |
+| VS Code (agent mode)             | sim           | sim — `/career-memory` |
+| JetBrains (agent mode)           | sim           | —                     |
+| Copilot CLI                      | sim           | não (o modelo decide) |
+| Coding agent / code review       | sim           | —                     |
+
+No VS Code as Agent Skills são GA e vêm ligadas por padrão desde a 1.109;
+`/skills` na caixa de chat abre o menu de configuração e mostra se o Career
+Memory foi reconhecido.
+
+#### Usar
+
+O modo principal é o mesmo dos outros hosts — linguagem natural. A `description`
+do `SKILL.md` é o que faz o Copilot carregar a skill sozinho, e ela lista os
+gatilhos em português e inglês:
+
+```text
+registra que eu corrigi a race condition do fluxo de pagamento
+prepara minha daily
+o que eu fiz essa semana
+importa minhas PRs do último mês
+o que falta para eu ser promovido a Staff
+```
+
+No VS Code você também pode chamar direto, sem depender do julgamento do modelo:
+
+```text
+/career-memory prepara minha daily
+```
+
+E a CLI é idêntica em qualquer host:
+
+```bash
+CM=~/.copilot/skills/career-memory/scripts/career_memory.py
+python3 $CM list --window 7d
+```
+
+#### Os 16 slash commands
+
+Os comandos `career-daily`, `career-brag`, `career-review` e companhia vivem em
+`commands/` e são um formato do Claude Code. O equivalente no VS Code são os
+*prompt files*, que aceitam os mesmos campos `description` e `argument-hint`.
+Para gerar todos de uma vez, dentro do repositório onde você quer usá-los:
+
+```bash
+mkdir -p .github/prompts
+for f in ~/dev/career-memory/commands/*.md; do
+  cp "$f" ".github/prompts/$(basename "${f%.md}").prompt.md"
+done
+```
+
+Depois disso `/career-daily`, `/career-brag` etc. aparecem ao digitar `/` no
+chat. Um detalhe: o corpo dos comandos usa `$ARGUMENTS` para o texto que você
+digita depois do comando, que é a sintaxe do Claude Code; a documentada no VS
+Code é `${input:nome}`. Se a sua versão não substituir `$ARGUMENTS`, troque:
+
+```bash
+sed -i '' 's/\$ARGUMENTS/${input:contexto}/g' .github/prompts/career-*.prompt.md
+```
+
+No Copilot CLI ainda não existe slash command customizado — peça em linguagem
+natural, que é o modo para o qual a skill foi escrita de qualquer forma.
+
+#### O que muda de verdade
+
+- **Coding agent (na nuvem)** — roda numa VM efêmera. Um store em
+  `~/career-memory` some junto com a VM. Se você quiser usar a skill lá, aponte
+  `CAREER_MEMORY_HOME` para um diretório versionado do repositório; caso
+  contrário, use a skill no CLI ou no editor, onde o store é seu.
+- **GitHub como evidência** — precisa de `gh auth login` ou de um `GITHUB_TOKEN`
+  de leitura, igual em qualquer host. Nada disso vem do Copilot.
+- **`gh skill publish --dry-run`** avisa que a `description` passa dos 1024
+  caracteres recomendados. É recomendação, não limite: a skill valida e carrega
+  normalmente. O tamanho é proposital — são os gatilhos em dois idiomas.
 
 ---
 

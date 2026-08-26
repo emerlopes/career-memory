@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- GitHub Copilot support, verified end to end: the skill installs with
+  `gh skill install --agent github-copilot`, validates against the Agent Skills
+  specification (`gh skill publish --dry-run`), and runs unchanged on the CLI,
+  in VS Code and in the coding agent
+- The bootstrap in `SKILL.md` no longer assumes a Claude Code install. It now
+  resolves `career_memory.py` from every directory the common hosts use —
+  `$CLAUDE_PLUGIN_ROOT`, `~/.claude/skills`, `~/.copilot/skills`,
+  `~/.agents/skills`, and the project-level `.github/skills`, `.claude/skills`
+  and `.agents/skills`. Before this, an install anywhere but `~/.claude` left
+  `$CM` empty and every command failed
+- `docs/MANUAL.md` gains a [GitHub Copilot](docs/MANUAL.md#github-copilot)
+  section: install scopes, which Copilot surfaces load skills, how to turn the
+  16 slash commands into VS Code prompt files, and the one thing that genuinely
+  differs — the cloud coding agent's ephemeral store
+
 ## 0.5.0 — 2026-08-26
 
 Implements the v0.5 scope of [`docs/SPEC.md`](docs/SPEC.md): career
