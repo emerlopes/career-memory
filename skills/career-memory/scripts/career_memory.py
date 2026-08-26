@@ -26,7 +26,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 ENTRY_TYPES = [
     "achievement",
@@ -687,6 +687,10 @@ def ensure_store(store: Path) -> list[str]:
     if not summaries.is_dir():
         summaries.mkdir(parents=True, exist_ok=True)
         created.append(f"{summaries.name}/")
+    trends = trends_dir(store)
+    if not trends.is_dir():
+        trends.mkdir(parents=True, exist_ok=True)
+        created.append(f"{trends.name}/")
 
     templates = Path(__file__).resolve().parent.parent / "templates"
     profile = store / "profile.md"
@@ -1691,8 +1695,14 @@ def summary_path(store: Path, period: dict) -> Path:
     return summaries_dir(store) / f"{period['label']}.md"
 
 
-def profile_competencies(store: Path) -> list[str]:
-    """Competencies the user listed in profile.md, ignoring template placeholders."""
+def _ascii_fold(text: str) -> str:
+    """Lowercase without accents, so 'Competências' and 'Nível' match too."""
+    folded = unicodedata.normalize("NFKD", text.lower())
+    return folded.encode("ascii", "ignore").decode("ascii")
+
+
+def profile_sections(store: Path) -> list[tuple[str, list[str]]]:
+    """(heading, lines) pairs from profile.md, in file order."""
     profile = store / "profile.md"
     if not profile.is_file():
         return []
@@ -1700,20 +1710,60 @@ def profile_competencies(store: Path) -> list[str]:
         text = profile.read_text(encoding="utf-8")
     except OSError:
         return []
-    items, inside = [], False
+    sections: list[tuple[str, list[str]]] = []
     for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            # "Competencies", "Core competencies" and "Competências" all count.
-            heading = unicodedata.normalize("NFKD", stripped.lower())
-            inside = "competenc" in heading.encode("ascii", "ignore").decode("ascii")
-            continue
-        if not inside or not stripped.startswith("- "):
-            continue
-        value = re.sub(r"<!--.*?-->", "", stripped[2:], flags=re.S).strip()
-        if value:
-            items.append(value)
+        heading = re.match(r"^#{1,6}\s+(.*\S)\s*$", line)
+        if heading:
+            sections.append((heading.group(1).strip(), []))
+        elif sections:
+            sections[-1][1].append(line)
+    return sections
+
+
+def _profile_line(line: str) -> str:
+    """A profile line with its bullet and template placeholder stripped."""
+    value = re.sub(r"<!--.*?-->", "", line, flags=re.S)
+    return re.sub(r"^\s*[-*+]\s*", "", value).strip()
+
+
+def profile_list(store: Path, needles: tuple[str, ...],
+                 scope: str | None = None) -> list[str]:
+    """Bulleted items under every heading matching one of `needles`.
+
+    `scope` narrows to headings that also name a role — "## Promotion criteria —
+    Staff Engineer" — so one profile can describe more than one ladder. When no
+    heading names it, every matching section counts.
+    """
+    matched = [(heading, lines) for heading, lines in profile_sections(store)
+               if any(needle in _ascii_fold(heading) for needle in needles)]
+    if scope:
+        matched = [pair for pair in matched
+                   if _ascii_fold(scope) in _ascii_fold(pair[0])] or matched
+    items = []
+    for _, lines in matched:
+        for line in lines:
+            if line.strip().startswith(("- ", "* ", "+ ")):
+                value = _profile_line(line)
+                if value:
+                    items.append(value)
     return items
+
+
+def profile_value(store: Path, needles: tuple[str, ...]) -> str:
+    """The first real line under a matching heading — a role, not a list."""
+    for heading, lines in profile_sections(store):
+        if not any(needle in _ascii_fold(heading) for needle in needles):
+            continue
+        for line in lines:
+            value = _profile_line(line)
+            if value:
+                return value
+    return ""
+
+
+def profile_competencies(store: Path) -> list[str]:
+    """Competencies the user listed in profile.md, ignoring template placeholders."""
+    return profile_list(store, ("competenc",))
 
 
 def _haystack(entry: Entry) -> str:
@@ -2173,6 +2223,33 @@ def _checkup_github(store: Path, entries: list[Entry], days: int) -> dict:
     }
 
 
+def _checkup_criteria(store: Path, confirmed: list[Entry]) -> dict | None:
+    """Ladder criteria the record does not cover — only when the user wrote some.
+
+    Gated on an explicit criteria section on purpose: falling back to
+    `## Competencies` here would raise a promotion question in every store that
+    filled in the profile template, which is the kind of nagging that gets a
+    skill uninstalled. The v0.5 helpers live further down the file; this reads
+    them, it does not duplicate them.
+    """
+    if not profile_list(store, CRITERIA_HEADINGS):
+        return None
+    role = profile_value(store, TARGET_HEADINGS)
+    criteria = parse_criteria(profile_list(store, CRITERIA_HEADINGS, scope=role))
+    since, until = parse_window("12m")
+    scoped = in_range(confirmed, since, until)
+    labels = bucket_labels(since, until, "quarter")
+    rows = [criterion_coverage(criterion, scoped, labels, "quarter")
+            for criterion in criteria]
+    return {
+        "role": role,
+        "window": [since, until],
+        "total": len(rows),
+        "absent": [row["name"] for row in rows if row["status"] == "absent"],
+        "thin": [row["name"] for row in rows if row["status"] == "thin"],
+    }
+
+
 def checkup_data(args, store: Path, entries: list[Entry]) -> dict:
     confirmed, candidates = split_by_status(entries)
     dates = sorted(e.date for e in confirmed if e.date)
@@ -2228,6 +2305,9 @@ def checkup_data(args, store: Path, entries: list[Entry]) -> dict:
         "gap_counts": gap_counts,
         "gap_total": len(gaps),
     }
+    criteria = _checkup_criteria(store, confirmed)
+    if criteria:
+        data["criteria"] = criteria
     if getattr(args, "github", False):
         data["github"] = _checkup_github(store, entries, args.github_days)
     return data
@@ -2280,6 +2360,22 @@ def print_checkup(data: dict) -> None:
     else:
         print("  none")
 
+    criteria = data.get("criteria")
+    if criteria:
+        role = f" for {criteria['role']}" if criteria["role"] else ""
+        print(f"\nLadder criteria{role} "
+              f"({criteria['window'][0]} → {criteria['window'][1]}):")
+        if criteria["absent"]:
+            print(f"  {len(criteria['absent'])} of {criteria['total']} with "
+                  f"nothing recorded: " + ", ".join(criteria["absent"]))
+        if criteria["thin"]:
+            print(f"  {len(criteria['thin'])} thin in the record: "
+                  + ", ".join(criteria["thin"]))
+        if not (criteria["absent"] or criteria["thin"]):
+            print(f"  all {criteria['total']} have entries in the record")
+        else:
+            print("  details: `promotion`")
+
     github = data.get("github")
     if github is not None:
         print(f"\nGitHub (last {github['days']} days):")
@@ -2306,6 +2402,8 @@ def print_checkup(data: dict) -> None:
                        f"# show the user before importing")
     if data["gap_total"]:
         actions.append("gaps   # then ask the user, one gap at a time")
+    if criteria and criteria["absent"]:
+        actions.append("promotion   # coverage per criterion; ask, do not conclude")
     if not actions:
         actions.append("nothing pending — the record is up to date")
     for action in actions:
@@ -2323,6 +2421,892 @@ def cmd_checkup(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Career intelligence (v0.5)
+# ---------------------------------------------------------------------------
+
+# Longitudinal reporting over the same entries. The v0.3 rule holds and matters
+# more here, because the numbers look like judgements: every figure below
+# describes the *record*. A competency with nothing recorded means nothing was
+# recorded about it, and a criterion the record does not cover is not a verdict
+# on whether the user deserves the promotion — that call is never this tool's.
+
+BUCKETS = ("auto", "month", "quarter", "year")
+
+TRAJECTORY_LABEL = {
+    "steady": "recorded in most periods",
+    "new": "first recorded in the recent periods",
+    "intermittent": "recorded on and off",
+    "paused": "nothing recorded lately",
+}
+
+COVERAGE_LABEL = {
+    "recurring": "recorded repeatedly",
+    "thin": "thin in the record",
+    "absent": "nothing in the record mentions it",
+}
+
+# Headings profile.md may use for a ladder and for the level being aimed at.
+CRITERIA_HEADINGS = ("criteri", "ladder", "nivel", "promoc", "level")
+TARGET_HEADINGS = ("target role", "target level", "cargo alvo", "nivel alvo",
+                   "proximo nivel", "promotion target")
+
+GRAPH_KINDS = ("project", "skill", "tag", "person")
+
+
+def period_count(n: int) -> str:
+    return f"{n} period{'' if n == 1 else 's'}"
+
+
+def quarter_label(day: dt.date) -> str:
+    return f"{day.year}-Q{(day.month - 1) // 3 + 1}"
+
+
+def bucket_label(day: dt.date, bucket: str) -> str:
+    if bucket == "month":
+        return month_label(day)
+    if bucket == "quarter":
+        return quarter_label(day)
+    return str(day.year)
+
+
+def bucket_start(day: dt.date, bucket: str) -> dt.date:
+    if bucket == "month":
+        return day.replace(day=1)
+    if bucket == "quarter":
+        return day.replace(month=3 * ((day.month - 1) // 3) + 1, day=1)
+    return day.replace(month=1, day=1)
+
+
+def next_bucket(day: dt.date, bucket: str) -> dt.date:
+    start = bucket_start(day, bucket)
+    if bucket == "month":
+        return (start.replace(year=start.year + 1, month=1) if start.month == 12
+                else start.replace(month=start.month + 1))
+    if bucket == "quarter":
+        return (start.replace(year=start.year + 1, month=1) if start.month >= 10
+                else start.replace(month=start.month + 3))
+    return start.replace(year=start.year + 1)
+
+
+def choose_bucket(since: str | None, until: str | None) -> str:
+    """A period size that gives a readable number of columns for the range."""
+    try:
+        span = (dt.date.fromisoformat(until or "") - dt.date.fromisoformat(since or "")).days
+    except ValueError:
+        return "month"
+    if span <= 400:
+        return "month"
+    if span <= 1500:
+        return "quarter"
+    return "year"
+
+
+def bucket_labels(since: str | None, until: str | None, bucket: str) -> list[str]:
+    """Every period the range touches, oldest first — empty ones included.
+
+    Empty periods are the point: a competency that disappears for two quarters
+    only shows up as a gap if those quarters are still columns.
+    """
+    try:
+        cursor = bucket_start(dt.date.fromisoformat(since or ""), bucket)
+        end = dt.date.fromisoformat(until or "")
+    except ValueError:
+        return []
+    labels = []
+    while cursor <= end and len(labels) < 240:
+        labels.append(bucket_label(cursor, bucket))
+        cursor = next_bucket(cursor, bucket)
+    return labels
+
+
+def entry_bucket(entry: Entry, bucket: str) -> str:
+    try:
+        return bucket_label(dt.date.fromisoformat(entry.date), bucket)
+    except ValueError:
+        return ""
+
+
+def bucket_series(entries: list[Entry], labels: list[str], bucket: str) -> list[dict]:
+    rows = {label: {"label": label, "entries": 0, "with_evidence": 0,
+                    "with_impact": 0, "projects": set()} for label in labels}
+    for entry in entries:
+        row = rows.get(entry_bucket(entry, bucket))
+        if row is None:
+            continue
+        row["entries"] += 1
+        if entry_evidence(entry):
+            row["with_evidence"] += 1
+        if entry_impact(entry)[0]:
+            row["with_impact"] += 1
+        project = entry.meta.get("project")
+        if project:
+            row["projects"].add(str(project))
+    return [{**rows[label], "projects": sorted(rows[label]["projects"])}
+            for label in labels]
+
+
+def _trajectory(counts: dict[str, int], labels: list[str]) -> str:
+    """How a theme sits across the periods. Interpretation — labelled as one.
+
+    Below three periods there is no shape to read, so nothing is claimed.
+    """
+    active = [index for index, label in enumerate(labels) if counts.get(label)]
+    if not active or len(labels) < 3:
+        return ""
+    recent = len(labels) - max(1, round(len(labels) / 3))
+    if active[-1] < recent:
+        return "paused"
+    if len(active) >= max(2, round(len(labels) * 0.6)):
+        return "steady"
+    if active[0] >= recent:
+        return "new"
+    return "intermittent"
+
+
+def theme_series(entries: list[Entry], labels: list[str], bucket: str,
+                 getter, top: int = 0, min_entries: int = 1) -> list[dict]:
+    """One row per recurring value (skill, project, tag, person) over the periods."""
+    themes: dict[str, dict] = {}
+    for entry in entries:
+        label = entry_bucket(entry, bucket)
+        for raw in getter(entry):
+            if not raw:
+                continue
+            name = str(raw)
+            row = themes.setdefault(name, {
+                "name": name, "total": 0, "counts": {}, "first": "", "last": "",
+                "projects": set(), "with_evidence": 0, "with_impact": 0,
+            })
+            row["total"] += 1
+            row["counts"][label] = row["counts"].get(label, 0) + 1
+            row["first"] = min(row["first"] or entry.date, entry.date) if entry.date else row["first"]
+            row["last"] = max(row["last"], entry.date or "")
+            if entry_evidence(entry):
+                row["with_evidence"] += 1
+            if entry_impact(entry)[0]:
+                row["with_impact"] += 1
+            project = entry.meta.get("project")
+            if project:
+                row["projects"].add(str(project))
+
+    rows = []
+    for row in themes.values():
+        if row["total"] < min_entries:
+            continue
+        rows.append({**row,
+                     "projects": sorted(row["projects"]),
+                     "periods": [row["counts"].get(label, 0) for label in labels],
+                     "active_periods": sum(1 for label in labels if row["counts"].get(label)),
+                     # One entry has no shape over time; claiming a trajectory
+                     # for it would be reading a trend into a single event.
+                     "trajectory": (_trajectory(row["counts"], labels)
+                                    if row["total"] > 1 else "")})
+    rows.sort(key=lambda r: (-r["total"], r["name"]))
+    return rows[:top] if top else rows
+
+
+def impact_patterns(entries: list[Entry], top: int = 8) -> list[dict]:
+    """Themes that recur, and how often an impact was actually written down.
+
+    Tags and projects only: they are facts recorded on the entry. Skills are the
+    agent's reading of it, and a pattern built on a reading is a reading.
+    """
+    themes: dict[str, dict] = {}
+    for entry in entries:
+        statement, confidence = entry_impact(entry)
+        names = {str(tag) for tag in entry.field_list("tags") if tag}
+        project = entry.meta.get("project")
+        if project:
+            names.add(str(project))
+        for name in names:
+            row = themes.setdefault(name, {"name": name, "entries": 0,
+                                           "with_impact": 0, "statements": [],
+                                           "last": ""})
+            row["entries"] += 1
+            row["last"] = max(row["last"], entry.date or "")
+            if statement:
+                row["with_impact"] += 1
+                row["statements"].append({"id": entry.id, "date": entry.date,
+                                          "statement": statement,
+                                          "confidence": confidence})
+    rows = [row for row in themes.values() if row["entries"] >= 2]
+    for row in rows:
+        row["statements"] = sorted(row["statements"],
+                                   key=lambda s: s["date"], reverse=True)[:3]
+    rows.sort(key=lambda r: (-r["with_impact"], -r["entries"], r["name"]))
+    return rows[:top] if top else rows
+
+
+def trends_dir(store: Path) -> Path:
+    return store / "outputs" / "trends"
+
+
+def trends_path(store: Path, since: str, until: str) -> Path:
+    return trends_dir(store) / f"{since}_{until}.md"
+
+
+def _half(rows: list[dict], labels: list[str]) -> dict:
+    totals = {"labels": labels, "entries": 0, "with_evidence": 0, "with_impact": 0}
+    for row in rows:
+        if row["label"] in labels:
+            for key in ("entries", "with_evidence", "with_impact"):
+                totals[key] += row[key]
+    return totals
+
+
+def trends_data(store: Path, entries: list[Entry], since: str, until: str,
+                bucket: str, project: str | None = None, top: int = 8) -> dict:
+    confirmed, _ = split_by_status(entries)
+    if project:
+        confirmed = [e for e in confirmed if e.meta.get("project") == project]
+    scoped = in_range(confirmed, since, until)
+    labels = bucket_labels(since, until, bucket)
+    series = bucket_series(scoped, labels, bucket)
+    dates = sorted(e.date for e in scoped if e.date)
+
+    middle = len(labels) // 2
+    halves = ({"early": _half(series, labels[:middle]),
+               "recent": _half(series, labels[middle:])}
+              if len(labels) >= 2 else {})
+
+    busiest = max(series, key=lambda r: r["entries"], default=None)
+    return {
+        "since": since,
+        "until": until,
+        "bucket": bucket,
+        "project": project,
+        "count": len(scoped),
+        "span": [dates[0], dates[-1]] if dates else [],
+        "periods": series,
+        "period_labels": labels,
+        "active_periods": sum(1 for row in series if row["entries"]),
+        "busiest": busiest["label"] if busiest and busiest["entries"] else "",
+        "with_evidence": sum(1 for e in scoped if entry_evidence(e)),
+        "with_impact": sum(1 for e in scoped if entry_impact(e)[0]),
+        "by_type": tally(scoped, lambda e: [e.meta.get("type")]),
+        "skills": theme_series(scoped, labels, bucket,
+                               lambda e: e.field_list("skills"), top),
+        "projects": theme_series(scoped, labels, bucket,
+                                 lambda e: [e.meta.get("project")], top),
+        "tags": theme_series(scoped, labels, bucket,
+                             lambda e: e.field_list("tags"), top),
+        "people": theme_series(scoped, labels, bucket,
+                               lambda e: e.field_list("people"), top),
+        "impact_patterns": impact_patterns(scoped, top),
+        "halves": halves,
+        "output_path": str(trends_path(store, since, until)),
+    }
+
+
+def _sparkline(periods: list[int]) -> str:
+    return " ".join(str(count) if count else "·" for count in periods)
+
+
+def _theme_line(row: dict) -> str:
+    line = f"  {row['total']:>3}  {row['name']}"
+    trajectory = TRAJECTORY_LABEL.get(row["trajectory"], "")
+    parts = [_sparkline(row["periods"])]
+    if trajectory:
+        parts.append(trajectory)
+    if row["last"]:
+        parts.append(f"last {row['last']}")
+    return f"{line}\n       {'  ·  '.join(parts)}"
+
+
+def print_trends_table(data: dict) -> None:
+    print(f"Career trends  ({data['since']} → {data['until']}, "
+          f"by {data['bucket']})")
+    if data["project"]:
+        print(f"project: {data['project']}")
+
+    if not data["count"]:
+        print("\nNothing was recorded in this range. That is a fact about the "
+              "record, not about the work — `github discover` covers the same "
+              "range if the work is on GitHub.")
+        return
+
+    print(f"\n{entry_count(data['count'])} recorded across "
+          f"{data['active_periods']} of {len(data['period_labels'])} periods "
+          f"({data['span'][0]} → {data['span'][1]})")
+    print(f"Evidence attached: {data['with_evidence']}/{data['count']}   ·   "
+          f"Impact documented: {data['with_impact']}/{data['count']}")
+
+    print(f"\n{'Period':<10} {'entries':>7} {'evidence':>8} {'impact':>7}  projects")
+    for row in data["periods"]:
+        print(f"{row['label']:<10} {row['entries']:>7} {row['with_evidence']:>8} "
+              f"{row['with_impact']:>7}  {', '.join(row['projects']) or '—'}")
+
+    halves = data.get("halves")
+    if halves and halves["early"]["labels"] and halves["recent"]["labels"]:
+        early, recent = halves["early"], halves["recent"]
+        print(f"\nEarlier half ({early['labels'][0]}–{early['labels'][-1]}) → "
+              f"recent half ({recent['labels'][0]}–{recent['labels'][-1]}):")
+        print(f"  entries {early['entries']} → {recent['entries']}   ·   "
+              f"evidence {early['with_evidence']}/{early['entries']} → "
+              f"{recent['with_evidence']}/{recent['entries']}   ·   "
+              f"impact {early['with_impact']}/{early['entries']} → "
+              f"{recent['with_impact']}/{recent['entries']}")
+
+    print(f"\nPeriods, oldest first: {' '.join(data['period_labels'])}")
+    for label, key, note in (
+        ("Competencies over time", "skills",
+         "skills are the agent's reading of an entry, not something the user stated"),
+        ("Projects over time", "projects", ""),
+        ("Tags over time", "tags", ""),
+        ("Worked with, over time", "people", ""),
+    ):
+        rows = data[key]
+        if not rows:
+            continue
+        header = f"\n{label}"
+        if note:
+            header += f"   ({note})"
+        print(header)
+        for row in rows:
+            print(_theme_line(row))
+
+    if data["impact_patterns"]:
+        print("\nRecurring impact patterns   (how often an impact was written down)")
+        for row in data["impact_patterns"]:
+            print(f"  {row['with_impact']}/{row['entries']}  {row['name']}"
+                  f"   ·   last {row['last']}")
+            for statement in row["statements"]:
+                confidence = f" ({statement['confidence']})" if statement["confidence"] else ""
+                print(f"       {statement['date']}  {statement['statement']}{confidence}")
+
+    paused = [row["name"] for key in ("projects", "skills", "tags")
+              for row in data[key] if row["trajectory"] == "paused"]
+    if paused:
+        print("\nNothing recorded lately for: " + ", ".join(dict.fromkeys(paused)))
+
+    print(f"\nSuggested output: {data['output_path']}")
+    print("Every line above counts entries. A theme that fades from the record "
+          "may have moved, stopped, or simply stopped being written down.")
+
+
+def print_trends_markdown(data: dict) -> None:
+    print(f"# Career trends — {data['since']} → {data['until']}")
+    if data["project"]:
+        print(f"\nProject: {data['project']}")
+    print()
+    print("<!-- Every figure here counts recorded entries. Do not add anything "
+          "that is not in the record, and do not read a quiet period as a "
+          "quiet quarter. -->")
+
+    if not data["count"]:
+        print("\nNo entries were recorded in this range.")
+        print(f"\n_Suggested path: {data['output_path']}_")
+        return
+
+    print("\n## What the record holds\n")
+    print(f"- {entry_count(data['count'])} recorded between {data['span'][0]} "
+          f"and {data['span'][1]}.")
+    print(f"- Recorded in {data['active_periods']} of "
+          f"{len(data['period_labels'])} periods ({data['bucket']}ly).")
+    print(f"- Evidence attached: {data['with_evidence']}/{data['count']}; "
+          f"impact documented: {data['with_impact']}/{data['count']}.")
+    if data["busiest"]:
+        print(f"- Most entries in a single period: {data['busiest']}.")
+
+    print("\n## Period by period\n")
+    print("| Period | Entries | With evidence | With impact | Projects |")
+    print("| --- | ---: | ---: | ---: | --- |")
+    for row in data["periods"]:
+        print(f"| {row['label']} | {row['entries']} | {row['with_evidence']} | "
+              f"{row['with_impact']} | {', '.join(row['projects']) or '—'} |")
+
+    if data["skills"]:
+        print("\n## Competency evolution\n")
+        print("_Skills are an interpretation of the entries, not something the "
+              "user asserted._\n")
+        for row in data["skills"]:
+            trajectory = TRAJECTORY_LABEL.get(row["trajectory"], "")
+            suffix = f" — {trajectory}" if trajectory else ""
+            print(f"- **{row['name']}** — {entry_count(row['total'])} across "
+                  f"{period_count(row['active_periods'])}, "
+                  f"{row['first']} → {row['last']}{suffix}")
+            print(f"  - By period: {_sparkline(row['periods'])} "
+                  f"({' '.join(data['period_labels'])})")
+
+    if data["projects"]:
+        print("\n## Where the work sat\n")
+        for row in data["projects"]:
+            print(f"- **{row['name']}** — {entry_count(row['total'])}, "
+                  f"{row['first']} → {row['last']}")
+
+    if data["impact_patterns"]:
+        print("\n## Recurring impact patterns\n")
+        for row in data["impact_patterns"]:
+            print(f"- **{row['name']}** — {row['with_impact']} of "
+                  f"{row['entries']} entries have a documented impact")
+            for statement in row["statements"]:
+                print(f"  - {statement['date']}: {statement['statement']}")
+
+    print("\n## What this does not say\n")
+    print("- A period with few entries is a period with few *entries*.")
+    print("- A competency that disappears may have stopped being recorded.")
+    if data["with_impact"] < data["count"]:
+        print(f"- {data['count'] - data['with_impact']} entr"
+              f"{'y' if data['count'] - data['with_impact'] == 1 else 'ies'} "
+              f"in this range have no documented impact; `gaps` lists them.")
+
+    print(f"\n_Suggested path: {data['output_path']}_")
+
+
+def cmd_trends(args) -> int:
+    store = require_store(resolve_store(args.dir))
+    entries = load_entries(store, include_candidates=False)
+    since, until = _bounded_range(entries, *_range_from_args(args, "12m"))
+    bucket = args.bucket if args.bucket != "auto" else choose_bucket(since, until)
+    data = trends_data(store, entries, since, until, bucket, args.project, args.top)
+
+    if args.format == "json":
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    elif args.format == "markdown":
+        print_trends_markdown(data)
+    else:
+        print_trends_table(data)
+    return 0
+
+
+def parse_criteria(raw: list[str]) -> list[dict]:
+    """'Technical leadership: mentoring, RFC' -> name plus the words to match on."""
+    criteria = []
+    for item in raw:
+        name, _, alias_text = str(item).partition(":")
+        name = name.strip()
+        if not name:
+            continue
+        aliases = [alias.strip() for alias in alias_text.split(",") if alias.strip()]
+        criteria.append({"name": name, "aliases": aliases})
+    return criteria
+
+
+def load_criteria(store: Path, role: str | None,
+                  explicit: list[str] | None) -> tuple[list[dict], str]:
+    """The criteria to measure the record against, and where they came from.
+
+    Falling back to `## Competencies` is deliberate but worth saying out loud:
+    competencies are what the user claims to have, a ladder is what the company
+    asks for, and treating one as the other quietly changes what the report
+    means.
+    """
+    if explicit:
+        return parse_criteria(explicit), "the criteria you passed"
+    items = profile_list(store, CRITERIA_HEADINGS, scope=role)
+    if items:
+        return parse_criteria(items), "profile.md"
+    items = profile_competencies(store)
+    if items:
+        return parse_criteria(items), "profile.md competencies (no ladder recorded)"
+    return [], ""
+
+
+def criterion_coverage(criterion: dict, entries: list[Entry], labels: list[str],
+                       bucket: str, min_entries: int = 3,
+                       recent_days: int = 180) -> dict:
+    phrases = [criterion["name"], *criterion["aliases"]]
+    matched = [entry for entry in entries
+               if any(_covers(entry, phrase) for phrase in phrases)]
+    dates = sorted(entry.date for entry in matched if entry.date)
+    counts: dict[str, int] = {}
+    for entry in matched:
+        label = entry_bucket(entry, bucket)
+        counts[label] = counts.get(label, 0) + 1
+    periods = [counts.get(label, 0) for label in labels]
+    active = sum(1 for count in periods if count)
+    projects = sorted({str(e.meta.get("project")) for e in matched if e.meta.get("project")})
+
+    days_since = None
+    if dates:
+        try:
+            days_since = (today() - dt.date.fromisoformat(dates[-1])).days
+        except ValueError:
+            days_since = None
+
+    if not matched:
+        status = "absent"
+    elif len(matched) < min_entries or active < 2:
+        status = "thin"
+    else:
+        status = "recurring"
+
+    notes = []
+    if matched and len(projects) == 1:
+        notes.append(f"all in one project ({projects[0]})")
+    if days_since is not None and days_since > recent_days:
+        notes.append(f"nothing recorded in the last {recent_days} days "
+                     f"(latest {dates[-1]})")
+    if matched and not any(entry_evidence(entry) for entry in matched):
+        notes.append("no entry has evidence attached")
+
+    return {
+        "name": criterion["name"],
+        "aliases": criterion["aliases"],
+        "status": status,
+        "entries": len(matched),
+        "with_evidence": sum(1 for entry in matched if entry_evidence(entry)),
+        "with_impact": sum(1 for entry in matched if entry_impact(entry)[0]),
+        "periods": periods,
+        "active_periods": active,
+        "projects": projects,
+        "first": dates[0] if dates else "",
+        "last": dates[-1] if dates else "",
+        "days_since_last": days_since,
+        "notes": notes,
+        "matches": [{"id": entry.id, "date": entry.date, "title": entry.title,
+                     "project": entry.meta.get("project") or "",
+                     "evidence": evidence_refs(entry),
+                     "impact": entry_impact(entry)[0]}
+                    for entry in matched],
+    }
+
+
+def promotion_data(store: Path, entries: list[Entry], since: str, until: str,
+                   bucket: str, role: str | None = None,
+                   explicit: list[str] | None = None, min_entries: int = 3,
+                   recent_days: int = 180, project: str | None = None) -> dict:
+    confirmed, _ = split_by_status(entries)
+    if project:
+        confirmed = [e for e in confirmed if e.meta.get("project") == project]
+    scoped = in_range(confirmed, since, until)
+    labels = bucket_labels(since, until, bucket)
+    target = role or profile_value(store, TARGET_HEADINGS)
+    criteria_raw, source = load_criteria(store, target, explicit)
+    coverage = [criterion_coverage(criterion, scoped, labels, bucket,
+                                   min_entries, recent_days)
+                for criterion in criteria_raw]
+
+    matched_ids = {match["id"] for row in coverage for match in row["matches"]}
+    unmatched = [{"id": entry.id, "date": entry.date, "title": entry.title}
+                 for entry in scoped if entry.id not in matched_ids]
+
+    return {
+        "role": target,
+        "criteria_source": source,
+        "since": since,
+        "until": until,
+        "bucket": bucket,
+        "period_labels": labels,
+        "project": project,
+        "count": len(scoped),
+        "min_entries": min_entries,
+        "recent_days": recent_days,
+        "criteria": coverage,
+        "by_status": {
+            status: [row["name"] for row in coverage if row["status"] == status]
+            for status in ("recurring", "thin", "absent")
+        },
+        "unmatched": unmatched,
+    }
+
+
+NOT_A_VERDICT = (
+    "This is coverage of the record against those criteria — not a readiness "
+    "verdict, which is not this tool's to give. A criterion with nothing "
+    "recorded may be work that was done and never written down; the fix is to "
+    "ask, not to assume either way."
+)
+
+
+def _no_criteria(data: dict) -> None:
+    print("\nNo criteria to measure against.")
+    print("Add them under a `## Promotion criteria` heading in profile.md — one "
+          "bullet per criterion, optionally with the words your entries use:")
+    print('\n  - Technical leadership: mentoring, migration, RFC')
+    print("\nOr pass them directly: "
+          "`promotion --criterion \"Technical leadership: mentoring, RFC\"`.")
+
+
+def print_promotion_table(data: dict) -> None:
+    header = "Promotion criteria against the record"
+    if data["role"]:
+        header = f"{data['role']} — how the record covers the criteria"
+    print(f"{header}  ({data['since']} → {data['until']}, "
+          f"{entry_count(data['count'])})")
+    if data["project"]:
+        print(f"project: {data['project']}")
+
+    if not data["criteria"]:
+        _no_criteria(data)
+        return
+
+    print(f"criteria from: {data['criteria_source']}")
+    print(f"periods, oldest first: {' '.join(data['period_labels'])}")
+
+    for status in ("recurring", "thin", "absent"):
+        group = [row for row in data["criteria"] if row["status"] == status]
+        if not group:
+            continue
+        print(f"\n{COVERAGE_LABEL[status].capitalize()} ({len(group)})")
+        for row in group:
+            print(f"  {row['name']}")
+            if status == "absent":
+                hint = f'search "{row["name"]}"'
+                print(f"      no entry in this range mentions it   ·   try: {hint}")
+                continue
+            print(f"      {entry_count(row['entries'])} across "
+                  f"{period_count(row['active_periods'])}   ·   "
+                  f"{row['first']} → {row['last']}")
+            print(f"      {_sparkline(row['periods'])}   ·   "
+                  f"evidence {row['with_evidence']}/{row['entries']}   ·   "
+                  f"impact {row['with_impact']}/{row['entries']}")
+            for note in row["notes"]:
+                print(f"      note: {note}")
+            for match in row["matches"][:3]:
+                print(f"      - {match['date']}  {match['title']}")
+            if len(row["matches"]) > 3:
+                print(f"      … and {len(row['matches']) - 3} more")
+
+    if data["unmatched"]:
+        print(f"\nEntries matching no criterion ({len(data['unmatched'])})")
+        for entry in data["unmatched"][:5]:
+            print(f"  {entry['date']}  {entry['title']}")
+        if len(data["unmatched"]) > 5:
+            print(f"  … and {len(data['unmatched']) - 5} more")
+        print("      Either the criteria are worded differently from the "
+              "entries, or this work sits outside the ladder. Both are worth "
+              "asking about.")
+
+    print(f"\n{NOT_A_VERDICT}")
+
+
+def print_promotion_markdown(data: dict) -> None:
+    title = data["role"] or "target role not recorded"
+    print(f"# Promotion criteria against the record — {title}")
+    print(f"\n_{data['since']} → {data['until']} · {entry_count(data['count'])} "
+          f"· criteria from {data['criteria_source'] or 'nowhere yet'}_")
+    print()
+    print("<!-- Coverage of the record, not a readiness verdict. Every bullet "
+          "must trace to an entry. -->")
+
+    if not data["criteria"]:
+        print("\nNo criteria were found. Add them under a "
+              "`## Promotion criteria` heading in profile.md.")
+        return
+
+    for status in ("recurring", "thin", "absent"):
+        group = [row for row in data["criteria"] if row["status"] == status]
+        if not group:
+            continue
+        print(f"\n## {COVERAGE_LABEL[status].capitalize()}\n")
+        for row in group:
+            if status == "absent":
+                print(f"- **{row['name']}** — no entry in this range mentions it.")
+                continue
+            print(f"- **{row['name']}** — {entry_count(row['entries'])} across "
+                  f"{period_count(row['active_periods'])}, {row['first']} → "
+                  f"{row['last']}; evidence {row['with_evidence']}/"
+                  f"{row['entries']}, impact {row['with_impact']}/{row['entries']}")
+            for note in row["notes"]:
+                print(f"  - Note: {note}")
+            for match in row["matches"]:
+                evidence = f" — {', '.join(match['evidence'])}" if match["evidence"] else ""
+                print(f"  - {match['date']} · {match['title']}{evidence}")
+
+    if data["unmatched"]:
+        print("\n## Recorded work that matches no criterion\n")
+        for entry in data["unmatched"]:
+            print(f"- {entry['date']} · {entry['title']}")
+
+    print(f"\n## What this is not\n\n{NOT_A_VERDICT}")
+
+
+def cmd_promotion(args) -> int:
+    store = require_store(resolve_store(args.dir))
+    entries = load_entries(store, include_candidates=False)
+    since, until = _bounded_range(entries, *_range_from_args(args, "12m"))
+    bucket = args.bucket if args.bucket != "auto" else choose_bucket(since, until)
+    data = promotion_data(store, entries, since, until, bucket, args.role,
+                          args.criterion, args.min_entries, args.recent_days,
+                          args.project)
+
+    if args.format == "json":
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    elif args.format == "markdown":
+        print_promotion_markdown(data)
+    else:
+        print_promotion_table(data)
+    return 0
+
+
+def graph_nodes(entry: Entry, kinds: list[str]) -> list[tuple[str, str]]:
+    nodes: list[tuple[str, str]] = []
+    if "project" in kinds and entry.meta.get("project"):
+        nodes.append(("project", str(entry.meta["project"])))
+    if "skill" in kinds:
+        nodes += [("skill", str(v)) for v in entry.field_list("skills") if v]
+    if "tag" in kinds:
+        nodes += [("tag", str(v)) for v in entry.field_list("tags") if v]
+    if "person" in kinds:
+        nodes += [("person", str(v)) for v in entry.field_list("people") if v]
+    return list(dict.fromkeys(nodes))
+
+
+def _components(names: list[str], edges: list[dict]) -> list[list[str]]:
+    """Groups of nodes that are connected through entries, largest first."""
+    parent = {name: name for name in names}
+
+    def find(node: str) -> str:
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    for edge in edges:
+        a, b = find(edge["source"]), find(edge["target"])
+        if a != b:
+            parent[a] = b
+
+    groups: dict[str, list[str]] = {}
+    for name in names:
+        groups.setdefault(find(name), []).append(name)
+    return sorted(groups.values(), key=lambda group: (-len(group), group[0]))
+
+
+def graph_data(entries: list[Entry], since: str, until: str, kinds: list[str],
+               min_weight: int = 2, top: int = 40,
+               project: str | None = None) -> dict:
+    confirmed, _ = split_by_status(entries)
+    if project:
+        confirmed = [e for e in confirmed if e.meta.get("project") == project]
+    scoped = in_range(confirmed, since, until)
+
+    node_entries: dict[str, set] = {}
+    node_kind: dict[str, str] = {}
+    pair_entries: dict[tuple[str, str], set] = {}
+    for entry in scoped:
+        nodes = graph_nodes(entry, kinds)
+        labelled = []
+        for kind, name in nodes:
+            key = f"{kind}:{name}"
+            node_kind[key] = kind
+            node_entries.setdefault(key, set()).add(entry.id)
+            labelled.append(key)
+        for index, left in enumerate(labelled):
+            for right in labelled[index + 1:]:
+                pair = tuple(sorted((left, right)))
+                pair_entries.setdefault(pair, set()).add(entry.id)
+
+    edges = [{"source": pair[0], "target": pair[1], "weight": len(ids),
+              "entries": sorted(ids)}
+             for pair, ids in pair_entries.items() if len(ids) >= min_weight]
+    edges.sort(key=lambda edge: (-edge["weight"], edge["source"], edge["target"]))
+    edges = edges[:top] if top else edges
+
+    degree: dict[str, int] = {}
+    for edge in edges:
+        degree[edge["source"]] = degree.get(edge["source"], 0) + 1
+        degree[edge["target"]] = degree.get(edge["target"], 0) + 1
+
+    nodes = [{"key": key, "kind": node_kind[key], "name": key.split(":", 1)[1],
+              "entries": len(ids), "degree": degree.get(key, 0)}
+             for key, ids in node_entries.items()]
+    nodes.sort(key=lambda node: (-node["entries"], node["key"]))
+
+    connected = [node["key"] for node in nodes if node["degree"]]
+    return {
+        "since": since,
+        "until": until,
+        "project": project,
+        "kinds": kinds,
+        "min_weight": min_weight,
+        "count": len(scoped),
+        "nodes": nodes,
+        "edges": edges,
+        "clusters": [group for group in _components(connected, edges) if len(group) > 1],
+        "isolated": [node["key"] for node in nodes if not node["degree"]],
+    }
+
+
+def _node_label(key: str) -> str:
+    kind, _, name = key.partition(":")
+    return f"{name} ({kind})"
+
+
+def print_graph_table(data: dict) -> None:
+    print(f"Evidence graph  ({data['since']} → {data['until']}, "
+          f"{entry_count(data['count'])})")
+    print(f"nodes: {', '.join(data['kinds'])}   ·   an edge means "
+          f"{data['min_weight']}+ entries mention both")
+    if data["project"]:
+        print(f"project: {data['project']}")
+
+    if not data["nodes"]:
+        print("\nNothing to connect: no projects, skills, tags or people are "
+              "recorded on the entries in this range.")
+        return
+
+    print("\nMost recorded:")
+    for node in data["nodes"][:10]:
+        print(f"  {node['entries']:>3}  {_node_label(node['key'])}"
+              f"   ·   connected to {node['degree']}")
+
+    if data["edges"]:
+        print("\nConnections:")
+        for edge in data["edges"]:
+            print(f"  {edge['weight']:>3}  {_node_label(edge['source'])} — "
+                  f"{_node_label(edge['target'])}")
+
+    if data["clusters"]:
+        print("\nClusters (things that travel together in the record):")
+        for index, cluster in enumerate(data["clusters"], 1):
+            print(f"  {index}. " + ", ".join(_node_label(key) for key in cluster))
+
+    if data["isolated"]:
+        print("\nRecorded on their own: "
+              + ", ".join(_node_label(key) for key in data["isolated"][:10]))
+
+    print("\nThe graph maps what the entries mention together. A missing edge "
+          "means the two were never recorded in the same entry.")
+
+
+# One shape per node kind, so a diagram stays readable without a legend.
+MERMAID_SHAPE = {
+    "project": '[\"{}\"]',
+    "skill": '(\"{}\")',
+    "person": '((\"{}\"))',
+    "tag": '{{{{\"{}\"}}}}',
+}
+
+
+def print_graph_mermaid(data: dict) -> None:
+    print("graph LR")
+    if not data["edges"]:
+        print('  empty[\"nothing connected in this range\"]')
+        return
+    keys = list(dict.fromkeys([edge["source"] for edge in data["edges"]]
+                              + [edge["target"] for edge in data["edges"]]))
+    ids = {key: f"n{index}" for index, key in enumerate(keys, 1)}
+    for key in keys:
+        kind, _, name = key.partition(":")
+        shape = MERMAID_SHAPE.get(kind, '[\"{}\"]')
+        print(f"  {ids[key]}" + shape.format(name.replace('"', "'")))
+    for edge in data["edges"]:
+        print(f"  {ids[edge['source']]} ---|{edge['weight']}| {ids[edge['target']]}")
+
+
+def cmd_graph(args) -> int:
+    store = require_store(resolve_store(args.dir))
+    entries = load_entries(store, include_candidates=False)
+    since, until = _bounded_range(entries, *_range_from_args(args, "12m"))
+    kinds = [kind for kind in split_csv(args.nodes) if kind in GRAPH_KINDS]
+    if not kinds:
+        die(f"--nodes must name at least one of: {', '.join(GRAPH_KINDS)}")
+    data = graph_data(entries, since, until, kinds, args.min_weight, args.top,
+                      args.project)
+
+    if args.format == "json":
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    elif args.format == "mermaid":
+        print_graph_mermaid(data)
+    else:
+        print_graph_table(data)
+    return 0
+
+
+
 STORE_README = """# Career Memory
 
 This directory is your professional memory. It is plain Markdown — readable,
@@ -2335,6 +3319,7 @@ editable and portable without any agent.
 - `projects/` — per-project context
 - `outputs/` — generated documents (brag, review, promotion case, daily)
 - `outputs/summaries/` — weekly and monthly summaries, one file per period
+- `outputs/trends/` — longitudinal views of how the record evolves
 
 Everything here is yours. Put it in a private git repository if you want history.
 """
@@ -2504,6 +3489,50 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--github-days", type=int, default=7)
     p.add_argument("--format", choices=["table", "json"], default="table")
     p.set_defaults(func=cmd_checkup)
+
+    p = sub.add_parser("trends",
+                       help="how the record evolves: periods, competencies, impact patterns")
+    p.add_argument("--window", help="default: 12m")
+    p.add_argument("--from", dest="date_from", help="YYYY-MM-DD")
+    p.add_argument("--to", dest="date_to", help="YYYY-MM-DD")
+    p.add_argument("--bucket", choices=list(BUCKETS), default="auto",
+                   help="period size (auto picks by range length)")
+    p.add_argument("--project")
+    p.add_argument("--top", type=int, default=8, help="themes per section")
+    p.add_argument("--format", choices=["table", "markdown", "json"], default="table")
+    p.set_defaults(func=cmd_trends)
+
+    p = sub.add_parser("promotion",
+                       help="how the record covers a target role's criteria, over time")
+    p.add_argument("--role", help="target role (default: profile.md)")
+    p.add_argument("--criterion", action="append",
+                   metavar="NAME[:WORD,WORD]",
+                   help="repeatable; overrides the criteria in profile.md")
+    p.add_argument("--window", help="default: 12m")
+    p.add_argument("--from", dest="date_from", help="YYYY-MM-DD")
+    p.add_argument("--to", dest="date_to", help="YYYY-MM-DD")
+    p.add_argument("--bucket", choices=list(BUCKETS), default="auto")
+    p.add_argument("--project")
+    p.add_argument("--min-entries", type=int, default=3,
+                   help="entries below which a criterion reads as thin in the record")
+    p.add_argument("--recent-days", type=int, default=180,
+                   help="silence after which a criterion is flagged as not recent")
+    p.add_argument("--format", choices=["table", "markdown", "json"], default="table")
+    p.set_defaults(func=cmd_promotion)
+
+    p = sub.add_parser("graph",
+                       help="what the entries mention together: projects, skills, people")
+    p.add_argument("--window", help="default: 12m")
+    p.add_argument("--from", dest="date_from", help="YYYY-MM-DD")
+    p.add_argument("--to", dest="date_to", help="YYYY-MM-DD")
+    p.add_argument("--nodes", default="project,skill,person",
+                   help=f"comma separated: {', '.join(GRAPH_KINDS)}")
+    p.add_argument("--project")
+    p.add_argument("--min-weight", type=int, default=2,
+                   help="entries two things must share before they are connected")
+    p.add_argument("--top", type=int, default=40, help="cap the edge list")
+    p.add_argument("--format", choices=["table", "mermaid", "json"], default="table")
+    p.set_defaults(func=cmd_graph)
 
     p = sub.add_parser("validate", help="check every file against the schema")
     p.set_defaults(func=cmd_validate)

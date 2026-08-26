@@ -174,11 +174,14 @@ Depois, peça o que precisar:
 | "me prepara para entrevista comportamental"    | Histórias STAR construídas a partir de eventos reais                      |
 | "fecha minha semana"                           | Resumo semanal do que foi registrado, com o que ficou sem evidência       |
 | "o que está faltando na minha memória?"        | As lacunas concretas: sem evidência, sem impacto, candidatos parados      |
+| "como minhas competências evoluíram?"          | Cada competência período a período, com a trajetória no registro          |
+| "o que falta no meu registro para Staff?"      | Cobertura por critério do nível, e o que o registro ainda não menciona    |
 
 Há slash commands para as mesmas coisas: `/career-memory:career-daily`,
 `career-add`, `career-brag`, `career-review`, `career-promotion`,
 `career-resume`, `career-interview`, `career-search`, `career-github`,
-`career-weekly`, `career-monthly`, `career-checkup`, `career-gaps`.
+`career-weekly`, `career-monthly`, `career-checkup`, `career-gaps`,
+`career-trends`.
 
 ## GitHub
 
@@ -261,6 +264,68 @@ Duas coisas que essa parte nunca faz:
 E não vira lembrete chato: uma oferta por sessão, com número na frase, e se você
 não quiser, o assunto morre ali.
 
+## Inteligência de carreira
+
+As mesmas entradas, lidas em trimestres em vez de dias. É a parte que responde
+às perguntas longitudinais — como o trabalho evoluiu, o que se repete, e o que o
+registro já sustenta para o nível que você quer:
+
+```text
+/career-memory:career-trends 12m           # como o registro evoluiu
+/career-memory:career-promotion Staff Engineer
+```
+
+```bash
+python3 $CM trends --window 12m                    # períodos, competências, padrões de impacto
+python3 $CM trends --window 2y --format markdown   # o documento longitudinal
+python3 $CM promotion --role "Staff Engineer"      # cobertura por critério, ao longo do tempo
+python3 $CM graph --format mermaid                 # o que aparece junto nas entradas
+```
+
+**`trends`** divide o registro por mês, trimestre ou ano: entradas e cobertura
+período a período, a trajetória de cada competência entre eles (`steady`, `new`,
+`intermittent`, `paused`), os temas em que o impacto foi de fato documentado, e a
+primeira metade do intervalo contra a segunda.
+
+**`promotion`** mede o registro contra os critérios de um nível — vindos de
+`--criterion`, de um `## Promotion criteria` no seu `profile.md`, ou, como último
+recurso e dito com todas as letras, das suas competências. Cada critério cai em
+um de três grupos: **registrado repetidamente**, **fino no registro** ou
+**nenhuma entrada menciona**. Ele também lista o trabalho registrado que não
+casa com critério nenhum — que costuma ser vocabulário diferente, não ausência.
+
+Escreva a régua da sua empresa no `profile.md` e essa análise para de ser
+genérica:
+
+```markdown
+## Promotion criteria — Staff Engineer
+
+- Technical leadership: mentoring, migration, RFC
+- Organisational impact: cross-team, roadmap
+- System design: architecture, design doc
+```
+
+**`graph`** conecta projetos, competências, tags e pessoas que aparecem juntos
+nas entradas — uma aresta é "N entradas mencionam os dois". Serve para achar os
+agrupamentos em que seu trabalho realmente cai, e para ver a competência que só
+aparece ao lado de um projeto (exatamente o que um comitê pergunta).
+
+Duas coisas que essa parte nunca faz:
+
+- **Não transforma sumiço em declínio.** "Nada registrado ultimamente sobre
+  mentoria" significa que nada foi _registrado_. Você pode ter mentorado alguém
+  toda semana e não contado para ninguém. A saída oferece recuperar o período,
+  não narra uma queda.
+- **Não dá veredito.** `promotion` diz como o registro cobre os critérios.
+  Se você está pronto para o nível é julgamento sobre uma pessoa, feito por
+  gente que conhece o contexto — não por uma ferramenta lendo arquivos Markdown.
+  "Nenhuma entrada menciona estratégia organizacional" ajuda; "você não está
+  pronto" não ajuda e pode estar simplesmente errado.
+
+Um critério sem nada registrado é uma pergunta antes de ser uma lacuna: _isso
+faltou no registro, ou faltou no ano?_ As duas coisas têm correções bem
+diferentes, e só você sabe qual é.
+
 ## Seus dados
 
 Markdown puro, num diretório que é seu:
@@ -274,7 +339,8 @@ Markdown puro, num diretório que é seu:
 ├── feedback/           feedbacks recebidos
 ├── projects/           contexto por projeto
 └── outputs/            documentos gerados
-    └── summaries/      resumos semanais e mensais, um arquivo por período
+    ├── summaries/      resumos semanais e mensais, um arquivo por período
+    └── trends/         visões longitudinais de como o registro evoluiu
 ```
 
 Local por padrão. Sem banco de dados, sem conta, sem servidor, nada é enviado
@@ -304,6 +370,9 @@ python3 $CM stats --window 6m
 python3 $CM summary --window last-week --format markdown
 python3 $CM gaps --window last-quarter
 python3 $CM checkup
+python3 $CM trends --window 12m
+python3 $CM promotion --role "Staff Engineer"
+python3 $CM graph --format mermaid
 python3 $CM validate
 
 python3 $CM github discover --window last-month
@@ -318,9 +387,10 @@ não é necessário.
 
 - **v0.1** — Armazenamento em Markdown, captura, candidatos, busca, brag documents e modo daily
 - **v0.2** — GitHub: descobrir PRs, issues, commits e reviews como evidências candidatas
-- **v0.3** — Memória proativa: resumos semanais/mensais, detecção de evidências faltantes _(atual)_
-- **v0.4** — Mais interfaces: Telegram, CLI independente, outros agentes
-- **v0.5** — Inteligência de carreira: evolução de competências, análise de lacunas para promoção ao longo do tempo
+- **v0.3** — Memória proativa: resumos semanais/mensais, detecção de evidências faltantes
+- **v0.4** — Bootstrap em toda interação e idioma configurável
+- **v0.5** — Inteligência de carreira: tendências, evolução de competências, análise de lacunas para promoção e grafo de evidências _(atual)_
+- **Próximo** — Mais interfaces: Telegram, CLI independente, outros agentes
 
 Especificação completa: [`docs/SPEC.md`](docs/SPEC.md).
 

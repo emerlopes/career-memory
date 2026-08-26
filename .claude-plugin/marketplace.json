@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Plugins by @emerlopes.",
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "plugins": [
     {
       "name": "career-memory",
       "source": "./",
       "description": "Never forget the work you've done. Captures your work as factual Markdown evidence and turns it into brag documents, performance reviews, promotion cases, resume bullets, interview stories and daily standups.",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "category": "productivity",
       "tags": [
         "career",
@@ -21,7 +21,9 @@
         "performance-review",
         "promotion",
         "standup",
-        "resume"
+        "resume",
+        "career-trends",
+        "promotion-gap"
       ],
       "author": {
         "name": "Emerson Lopes",

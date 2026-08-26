@@ -13,6 +13,7 @@ skills/career-memory/
 │   ├── daily.md          standup mode
 │   ├── github.md         discovery, import as candidates, evidence linking
 │   ├── proactive.md      summaries, missing evidence, when not to prompt
+│   ├── intelligence.md   trends, promotion-gap analysis, evidence graph
 │   └── outputs.md        brag, review, promotion, resume, interview
 ├── templates/        starting points for generated documents
 └── scripts/
@@ -39,3 +40,12 @@ on the work — "no evidence attached" is a fact about a file. Keep that framing
 in any wording change: the inverse reading is both discouraging and false, and
 a gap the agent fills in for the user is the same regression as an invented
 metric.
+
+The v0.5 commands (`trends`, `promotion`, `graph`) are the same statement made
+longitudinally, which is where it gets dangerous: a table of quarters reads like
+a measurement of a person. Two invariants hold the line. A theme that fades from
+the record has faded from the *record* — the work may have continued unrecorded,
+and the output must never narrate a decline. And `promotion` reports coverage of
+the criteria, never readiness: a verdict in either direction is a judgement
+about a person made from Markdown files, and adding one would be a regression
+even when the numbers look conclusive.

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.5.0 — 2026-08-26
+
+Implements the v0.5 scope of [`docs/SPEC.md`](docs/SPEC.md): career
+intelligence — the same entries read across quarters instead of days.
+
+- `trends` — how the record evolves: entries, evidence and impact coverage for
+  every month, quarter or year in the range (empty ones included), each
+  competency's trajectory across those periods (`steady`, `new`, `intermittent`,
+  `paused`), the themes where an impact was actually documented, and the earlier
+  half of the range against the recent half. `table`, `markdown` and `json`
+  output; `--bucket auto` picks the period size from the range length
+- `promotion` — promotion-gap analysis over time: the criteria for a target
+  level, each sorted into recorded repeatedly, thin in the record, or nothing in
+  the record mentions it, with the entries behind them and notes for the shapes
+  that matter — all in one project, nothing in the last six months, no evidence
+  attached. Criteria come from `--criterion`, a `## Promotion criteria` heading
+  in `profile.md` (a heading naming the role wins), or `## Competencies` as a
+  labelled fallback. Entries matching no criterion are reported too
+- `graph` — the evidence graph: projects, skills, tags and people that entries
+  name together, with an edge wherever two share enough entries, plus the
+  clusters they form. `table`, `mermaid` and `json` output
+- `checkup` now names ladder criteria with nothing recorded — only when the user
+  has written criteria into `profile.md`, so it stays silent for everyone else
+- Longitudinal summaries live in `outputs/trends/<since>_<until>.md`;
+  `profile.md` gained optional `## Target role` and `## Promotion criteria`
+  sections; `career-trends` slash command, `references/intelligence.md` and a
+  career-trends template
+
+Two invariants hold this version together, because a table of quarters reads
+like a measurement of a person and it is not one. A theme that fades has faded
+from the *record* — the work may have continued unrecorded, and no output
+narrates a decline. And coverage is never a verdict: `promotion` reports how the
+record covers the criteria and refuses to conclude readiness in either
+direction.
+
 ## 0.4.0 — 2026-08-26
 
 Every interaction now starts from a known state, and the skill speaks the

@@ -159,3 +159,8 @@ in one line, and let the user decide.
 Pattern observations like that are yours to offer, but they are interpretation —
 say them as an observation about the entries, and let the user confirm before
 any of it becomes a record.
+
+Patterns that span quarters rather than weeks belong to `trends` and
+`promotion`; the rules for not over-reading them are in
+`references/intelligence.md`, and they are the same rules, one order of
+magnitude more tempting to break.
