@@ -99,6 +99,9 @@ aqui é específico do Claude, exceto o caminho de instalação.
 Isso cria seu store (por padrão em `~/career-memory`) e ajuda a preencher um
 perfil curto. Depois é só trabalhar — e mencionar o que você fez.
 
+Se preferir ler antes de usar, o [manual de uso](docs/MANUAL.md) cobre todas as
+funcionalidades, uma a uma.
+
 Você pode fixar o local onde preferir:
 
 ```bash
@@ -115,11 +118,11 @@ python3 $CM config                      # mostra os valores atuais e as opções
 python3 $CM config --set language=pt
 ```
 
-| Configuração         | Padrão       | O que faz |
-| -------------------- | ------------ | --------- |
-| `language`           | `auto`       | Idioma das respostas e do corpo das entradas. `auto` segue o idioma da sua mensagem; `pt` ou `en` fixam. |
-| `documents_language` | `same`       | Idioma dos documentos gerados. `same` segue o `language`; `pt`/`en` fixam; `ask` pergunta a cada documento. |
-| `profile_gate`       | `documents`  | O que um `profile.md` incompleto bloqueia: `documents` (brag, review, promoção, CV), `all` (tudo) ou `remind` (nada, só lembra). |
+| Configuração         | Padrão      | O que faz                                                                                                                        |
+| -------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `language`           | `auto`      | Idioma das respostas e do corpo das entradas. `auto` segue o idioma da sua mensagem; `pt` ou `en` fixam.                         |
+| `documents_language` | `same`      | Idioma dos documentos gerados. `same` segue o `language`; `pt`/`en` fixam; `ask` pergunta a cada documento.                      |
+| `profile_gate`       | `documents` | O que um `profile.md` incompleto bloqueia: `documents` (brag, review, promoção, CV), `all` (tudo) ou `remind` (nada, só lembra). |
 
 O idioma nunca afeta o schema — `type`, `status`, tipos de evidência e as chaves
 do front matter continuam iguais, então o store funciona igual em qualquer
@@ -182,6 +185,10 @@ Há slash commands para as mesmas coisas: `/career-memory:career-daily`,
 `career-resume`, `career-interview`, `career-search`, `career-github`,
 `career-weekly`, `career-monthly`, `career-checkup`, `career-gaps`,
 `career-trends`.
+
+Há um **[manual de uso](docs/MANUAL.md)** com cada funcionalidade em detalhe: o
+que ela faz, como pedir em linguagem natural, o slash command correspondente, o
+comando de CLI por baixo e as armadilhas de cada uma.
 
 ## GitHub
 
@@ -392,6 +399,7 @@ não é necessário.
 - **v0.5** — Inteligência de carreira: tendências, evolução de competências, análise de lacunas para promoção e grafo de evidências _(atual)_
 - **Próximo** — Mais interfaces: Telegram, CLI independente, outros agentes
 
+Manual de uso completo: [`docs/MANUAL.md`](docs/MANUAL.md).
 Especificação completa: [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Contribuindo
