@@ -21,7 +21,7 @@ description: >-
   "resumo mensal", "fecha minha semana".
 license: MIT
 metadata:
-  version: 0.3.0
+  version: 0.4.0
 ---
 
 # Career Memory
@@ -54,6 +54,83 @@ Interpretation is allowed, but it must stay visibly an interpretation.
 cross-team leadership" is your reading of it — label it as such (`skills:` in
 front matter, or an "Interpretation" section), never as something that happened.
 
+## Start every interaction here
+
+Before you capture, retrieve or generate anything, run this once per session:
+
+```bash
+CM=$(find "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/career-memory}" -maxdepth 4 -name career_memory.py 2>/dev/null | head -1)
+python3 "$CM" status
+```
+
+`status` is the bootstrap: it creates the store, subdirectories, `profile.md`,
+`README.md` and `config.json` if any are missing — so there is no "not
+initialised" state to handle and no reason to ever ask the user for permission
+to set up. It then prints the settings and whether the profile is complete.
+
+Do this silently. The user asked for a memory, not for a tour of its plumbing;
+mention the setup only when something was actually created.
+
+A typical reply looks like:
+
+```text
+store: /Users/you/career-memory
+settings: language=auto, documents_language=same, profile_gate=documents
+profile: incomplete — missing Role, Focus, Current Goals
+blocked: documents
+```
+
+Use `--format json` when you want to branch on it programmatically.
+
+### Acting on `blocked`
+
+| `blocked`    | What it means                                                        |
+| ------------ | -------------------------------------------------------------------- |
+| `nothing`    | Proceed normally.                                                     |
+| `documents`  | Capture, search and dailies work. Brag/review/promotion/resume/interview need the profile first. |
+| `everything` | The user chose a hard gate: finish the profile before anything else.  |
+
+When a document is blocked, do not half-generate it and do not argue. Say what
+is missing and collect it in one short exchange — role, focus, goals is three
+questions, not a form — then write them into `profile.md` and continue with what
+they originally asked for. Their request is not cancelled by the gate; it is
+queued behind three answers.
+
+The reason the gate exists at all: a review or promotion case written without
+knowing the user's level and target reads like it was written about a generic
+engineer, because it was. Capture has no such dependency, which is why the
+default gate spares it — evidence mentioned in passing is lost if you stop to
+ask about job titles.
+
+## Language
+
+`config.json` in the store decides what language you write in:
+
+- `language: auto` — match the language of the user's message. This is the
+  default, and it is the right behaviour for someone who thinks in one language
+  and works in another.
+- `language: pt` / `en` — always that language, whatever they typed.
+
+`documents_language` governs generated documents specifically: `same` follows
+`language`, `pt`/`en` pin it, and `ask` means you ask before generating each
+one. That split exists because plenty of people speak Portuguese with their team
+and submit their performance review in English.
+
+Language applies to your replies, entry bodies and generated documents. It does
+**not** apply to schema values — `type`, `status`, evidence types and front
+matter keys stay as they are, so the store keeps working the same in any
+language.
+
+To change a setting:
+
+```bash
+python3 "$CM" config --set language=pt --set documents_language=en
+```
+
+Run `python3 "$CM" config` with no arguments to show current values and options.
+When the user asks to change how the skill behaves, change it here rather than
+promising to remember — settings survive the session, your memory does not.
+
 ## Where the memory lives
 
 A directory of Markdown files, resolved in this order:
@@ -61,18 +138,6 @@ A directory of Markdown files, resolved in this order:
 1. `$CAREER_MEMORY_HOME`
 2. `./career-memory` in the current project, if it exists
 3. `~/career-memory`
-
-Resolve the CLI path once per session and reuse it:
-
-```bash
-CM=$(find "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/career-memory}" -maxdepth 4 -name career_memory.py 2>/dev/null | head -1)
-python3 "$CM" where
-```
-
-If `where` reports the store is not initialised, run `python3 "$CM" init` and
-tell the user where it landed. On first setup, offer to fill in `profile.md`
-(role, focus, goals) — it costs one question and improves every document you
-generate later. Do not block capture on it.
 
 ## Use the CLI for the mechanical parts
 
@@ -82,6 +147,8 @@ those parts exactly; you do the judgment.
 
 | Need                    | Command                                                                         |
 | ----------------------- | ------------------------------------------------------------------------------- |
+| Bootstrap + settings    | `python3 "$CM" status`                                                          |
+| Change a setting        | `python3 "$CM" config --set language=pt`                                        |
 | Create the store        | `python3 "$CM" init`                                                            |
 | Record an entry         | `python3 "$CM" add "Title" --date … --type … --project … --tags … --evidence …` |
 | Attach evidence later   | `python3 "$CM" update <id> --add-evidence 'github_pr:#1234'`                    |
@@ -272,6 +339,11 @@ lead with what happened, not with adjectives; keep the user's voice; list the
 evidence; and include an honest "not documented" section instead of padding.
 
 Write generated documents to `outputs/` in the store, and tell the user the path.
+
+These are the outputs the profile gate protects. If `status` reported
+`blocked: documents`, collect role, focus and goals first (see
+"Start every interaction here"), write them into `profile.md`, then generate.
+Write in the language `documents_language` resolves to.
 
 ## Quality bar
 

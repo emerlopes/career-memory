@@ -56,6 +56,72 @@ check "init creates the store" "store ready" run init
 check_status "entries/ exists" 0 test -d "$WORK/store/entries"
 check_status "profile.md created" 0 test -f "$WORK/store/profile.md"
 
+# --- bootstrap and settings ------------------------------------------------
+STORE2="$WORK/bootstrapped"
+fill_profile() { # rewrite profile.md placeholders so the profile reads complete
+  python3 - "$STORE2/profile.md" <<'FILL'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text()
+t = t.replace("<!-- e.g. Senior Software Engineer -->", "Senior Software Engineer")
+t = t.replace("<!-- e.g. Backend systems, distributed systems, technical leadership -->", "Backend")
+t = t.replace("- <!-- e.g. Grow toward Staff Engineer -->", "- Staff Engineer")
+p.write_text(t)
+FILL
+}
+blank_role() { # put the Role placeholder back
+  python3 - "$STORE2/profile.md" <<'FILL'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+p.write_text(p.read_text().replace("Senior Software Engineer", "<!-- placeholder -->"))
+FILL
+}
+
+check "status creates a store from nothing" "created now:" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" status
+check_status "status created entries/" 0 test -d "$STORE2/entries"
+check_status "status created config.json" 0 test -f "$STORE2/config.json"
+check_absent "status is idempotent" "created now:" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" status
+check "a fresh profile reads as incomplete" "missing Role, Focus, Current Goals" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" status
+check "an incomplete profile blocks documents by default" "blocked: documents" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" status
+
+fill_profile
+check "a filled profile reads as complete" "profile: complete" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" status
+check "a complete profile blocks nothing" "blocked: nothing" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" status
+check "status --format json is parseable" '"blocked": "nothing"' \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" status --format json
+
+check "config shows defaults" "language" env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" config
+check "config --set persists" "Updated" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" config --set language=pt
+check "config --get reads it back" "pt" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" config --get language
+check "an invalid value is refused" "must be one of" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" config --set language=klingon
+check_status "an invalid value exits 1" 1 \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" config --set language=klingon
+check "an unknown setting is refused" "unknown setting" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" config --set idioma=pt
+check "a bad assignment is refused" "expected key=value" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" config --set language
+
+# The hard gate is opt-in, and must actually bite when chosen.
+blank_role
+env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" config --set profile_gate=all >/dev/null
+check "profile_gate=all blocks everything" "blocked: everything" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" status
+env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" config --set profile_gate=remind >/dev/null
+check "profile_gate=remind blocks nothing" "blocked: nothing" \
+  env CAREER_MEMORY_HOME="$STORE2" python3 "$CM" status
+
+mkdir -p "$WORK/corrupt" && printf '{ nope' > "$WORK/corrupt/config.json"
+check "a corrupt config falls back to defaults" "language" \
+  env CAREER_MEMORY_HOME="$WORK/corrupt" python3 "$CM" config
+
 # --- add -------------------------------------------------------------------
 check "add writes an entry" "Recorded:" run add "Resolved payment race condition" \
   --date "$TODAY" --type problem-solving --project payments \

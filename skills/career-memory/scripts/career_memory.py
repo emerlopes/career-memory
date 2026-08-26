@@ -26,7 +26,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 ENTRY_TYPES = [
     "achievement",
@@ -571,15 +571,124 @@ def evidence_index(store: Path, entries: list[Entry] | None = None) -> dict[str,
 # Commands
 # ---------------------------------------------------------------------------
 
-def cmd_init(args) -> int:
-    store = resolve_store(args.dir)
-    store.mkdir(parents=True, exist_ok=True)
-    for sub in SUBDIRS:
-        (store / sub).mkdir(exist_ok=True)
-    summaries_dir(store).mkdir(exist_ok=True)
-    templates = Path(__file__).resolve().parent.parent / "templates"
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
 
+CONFIG_FILE = "config.json"
+
+SETTINGS = {
+    # key: (default, allowed values, one-line explanation)
+    "language": (
+        "auto",
+        ["auto", "pt", "en"],
+        "Language for replies and entry bodies. 'auto' follows the user's message.",
+    ),
+    "documents_language": (
+        "same",
+        ["same", "pt", "en", "ask"],
+        "Language for generated documents. 'same' follows `language`; 'ask' asks each time.",
+    ),
+    "profile_gate": (
+        "documents",
+        ["documents", "all", "remind"],
+        "What an incomplete profile blocks: generated documents, everything, or nothing.",
+    ),
+}
+
+# Sections profile.md must actually answer before documents can be generated.
+# Anything else in the template is useful but not load-bearing.
+REQUIRED_PROFILE_SECTIONS = ["Role", "Focus", "Current Goals"]
+
+
+def config_path(store: Path) -> Path:
+    return store / CONFIG_FILE
+
+
+def load_config(store: Path) -> dict:
+    """Defaults, overlaid with whatever the user has set. Never raises."""
+    config = {key: default for key, (default, _, _) in SETTINGS.items()}
+    path = config_path(store)
+    if path.is_file():
+        try:
+            stored = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            print(
+                f"warning: {path} is not readable JSON; using defaults",
+                file=sys.stderr,
+            )
+            return config
+        for key, value in stored.items():
+            if key in SETTINGS:
+                config[key] = value
+            else:
+                print(f"warning: unknown setting {key!r} in {path}", file=sys.stderr)
+    return config
+
+
+def save_config(store: Path, config: dict) -> None:
+    payload = {key: config[key] for key in SETTINGS if key in config}
+    config_path(store).write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
+def profile_status(store: Path) -> dict:
+    """Which required profile sections are still unanswered.
+
+    A section counts as answered when it holds at least one line that is not
+    blank and not an HTML-comment placeholder from the template.
+    """
+    path = store / "profile.md"
+    if not path.is_file():
+        return {"exists": False, "complete": False, "missing": list(REQUIRED_PROFILE_SECTIONS)}
+
+    text = path.read_text(encoding="utf-8")
+    sections: dict[str, list[str]] = {}
+    current = None
+    for line in text.splitlines():
+        heading = re.match(r"^#{1,6}\s+(.*\S)\s*$", line)
+        if heading:
+            current = heading.group(1).strip()
+            sections.setdefault(current, [])
+            continue
+        if current is not None:
+            sections[current].append(line)
+
+    def answered(name: str) -> bool:
+        for key, lines in sections.items():
+            if key.lower() != name.lower():
+                continue
+            # Template placeholders are HTML comments, sometimes inside a
+            # bullet ("- <!-- e.g. ... -->"), so strip comments first and then
+            # see whether any real content is left.
+            body = re.sub(r"<!--.*?-->", "", "\n".join(lines), flags=re.S)
+            for line in body.splitlines():
+                content = re.sub(r"^\s*[-*+]\s*", "", line).strip()
+                if content:
+                    return True
+        return False
+
+    missing = [name for name in REQUIRED_PROFILE_SECTIONS if not answered(name)]
+    return {"exists": True, "complete": not missing, "missing": missing}
+
+
+def ensure_store(store: Path) -> list[str]:
+    """Create anything missing. Idempotent, and safe to call on every turn."""
     created = []
+    if not store.exists():
+        store.mkdir(parents=True, exist_ok=True)
+        created.append(str(store))
+    for sub in SUBDIRS:
+        if not (store / sub).is_dir():
+            (store / sub).mkdir(parents=True, exist_ok=True)
+            created.append(f"{sub}/")
+    summaries = summaries_dir(store)
+    if not summaries.is_dir():
+        summaries.mkdir(parents=True, exist_ok=True)
+        created.append(f"{summaries.name}/")
+
+    templates = Path(__file__).resolve().parent.parent / "templates"
     profile = store / "profile.md"
     if not profile.exists():
         source = templates / "profile.md"
@@ -592,13 +701,103 @@ def cmd_init(args) -> int:
     if not readme.exists():
         readme.write_text(STORE_README, encoding="utf-8")
         created.append("README.md")
+    if not config_path(store).is_file():
+        save_config(store, load_config(store))
+        created.append(CONFIG_FILE)
+    return created
+
+
+def cmd_init(args) -> int:
+    store = resolve_store(args.dir)
+    created = ensure_store(store)
+    config = load_config(store)
+    profile = profile_status(store)
 
     print(f"Career Memory store ready at {store}")
     print("  " + "  ".join(f"{s}/" for s in SUBDIRS))
     if created:
         print("  created: " + ", ".join(created))
+    print(f"  settings: " + ", ".join(f"{k}={v}" for k, v in config.items()))
+    if profile["missing"]:
+        print("  profile.md still needs: " + ", ".join(profile["missing"]))
     if not args.dir and not os.environ.get("CAREER_MEMORY_HOME"):
         print(f"\nTip: export CAREER_MEMORY_HOME={store} to pin this location.")
+    return 0
+
+
+def cmd_status(args) -> int:
+    """The entry point every interaction starts from.
+
+    It creates whatever is missing rather than complaining, then reports the
+    settings and whether the profile is complete enough for the gate in force.
+    """
+    store = resolve_store(args.dir)
+    created = ensure_store(store)
+    config = load_config(store)
+    profile = profile_status(store)
+
+    gate = config["profile_gate"]
+    if profile["complete"] or gate == "remind":
+        blocked = "nothing"
+    elif gate == "all":
+        blocked = "everything"
+    else:
+        blocked = "documents"
+
+    if args.format == "json":
+        print(json.dumps({
+            "store": str(store),
+            "created": created,
+            "settings": config,
+            "profile": profile,
+            "blocked": blocked,
+        }, indent=2, ensure_ascii=False))
+        return 0
+
+    print(f"store: {store}")
+    if created:
+        print(f"created now: {', '.join(created)}")
+    print("settings: " + ", ".join(f"{k}={v}" for k, v in config.items()))
+    if profile["complete"]:
+        print("profile: complete")
+    else:
+        print("profile: incomplete — missing " + ", ".join(profile["missing"]))
+    print(f"blocked: {blocked}")
+    return 0
+
+
+def cmd_config(args) -> int:
+    store = resolve_store(args.dir)
+    ensure_store(store)
+    config = load_config(store)
+
+    if args.get:
+        if args.get not in SETTINGS:
+            die(f"unknown setting {args.get!r} (known: {', '.join(SETTINGS)})")
+        print(config[args.get])
+        return 0
+
+    if args.set:
+        for assignment in args.set:
+            if "=" not in assignment:
+                die(f"expected key=value, got {assignment!r}")
+            key, _, value = assignment.partition("=")
+            key, value = key.strip(), value.strip()
+            if key not in SETTINGS:
+                die(f"unknown setting {key!r} (known: {', '.join(SETTINGS)})")
+            allowed = SETTINGS[key][1]
+            if value not in allowed:
+                die(f"{key} must be one of: {', '.join(allowed)} (got {value!r})")
+            config[key] = value
+        save_config(store, config)
+        print(f"Updated {config_path(store)}")
+
+    width = max(len(k) for k in SETTINGS)
+    for key, (default, allowed, explanation) in SETTINGS.items():
+        marker = "" if config[key] == default else "  (changed)"
+        print(f"  {key.ljust(width)}  {config[key]}{marker}")
+        print(f"  {' ' * width}  {explanation}")
+        print(f"  {' ' * width}  options: {', '.join(allowed)}")
     return 0
 
 
@@ -2192,6 +2391,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("init", help="create the store")
     p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser(
+        "status",
+        help="create anything missing, then report settings and profile state",
+    )
+    p.add_argument("--format", choices=["text", "json"], default="text")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("config", help="read or change settings")
+    p.add_argument("--set", action="append", metavar="KEY=VALUE",
+                   help="repeatable, e.g. --set language=pt")
+    p.add_argument("--get", metavar="KEY")
+    p.set_defaults(func=cmd_config)
 
     p = sub.add_parser("add", help="write a new entry")
     p.add_argument("title")

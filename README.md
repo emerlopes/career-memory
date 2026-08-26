@@ -105,6 +105,51 @@ Você pode fixar o local onde preferir:
 export CAREER_MEMORY_HOME="$HOME/Documents/career-memory"
 ```
 
+## Configurações
+
+As preferências ficam em `config.json`, dentro do próprio store — versionáveis,
+legíveis e persistentes entre sessões:
+
+```bash
+python3 $CM config                      # mostra os valores atuais e as opções
+python3 $CM config --set language=pt
+```
+
+| Configuração         | Padrão       | O que faz |
+| -------------------- | ------------ | --------- |
+| `language`           | `auto`       | Idioma das respostas e do corpo das entradas. `auto` segue o idioma da sua mensagem; `pt` ou `en` fixam. |
+| `documents_language` | `same`       | Idioma dos documentos gerados. `same` segue o `language`; `pt`/`en` fixam; `ask` pergunta a cada documento. |
+| `profile_gate`       | `documents`  | O que um `profile.md` incompleto bloqueia: `documents` (brag, review, promoção, CV), `all` (tudo) ou `remind` (nada, só lembra). |
+
+O idioma nunca afeta o schema — `type`, `status`, tipos de evidência e as chaves
+do front matter continuam iguais, então o store funciona igual em qualquer
+idioma.
+
+Sobre o `profile_gate`: documentos gerados sem saber seu cargo e seu alvo saem
+genéricos, porque são. Já a captura não depende disso — e evidência mencionada
+de passagem se perde se a skill parar para perguntar seu cargo. Por isso o padrão
+protege os documentos e deixa a captura livre.
+
+## Toda interação começa pelo mesmo lugar
+
+```bash
+python3 $CM status
+```
+
+`status` cria o que faltar (diretórios, `profile.md`, `README.md`, `config.json`),
+informa as configurações e diz se o perfil está completo:
+
+```text
+store: /Users/voce/career-memory
+settings: language=auto, documents_language=same, profile_gate=documents
+profile: incomplete — missing Role, Focus, Current Goals
+blocked: documents
+```
+
+É idempotente, então a skill roda isso no início de qualquer interação: não
+existe estado "não inicializado" para tratar, nem motivo para pedir permissão
+para criar a estrutura.
+
 ## Como usar
 
 Na maior parte do tempo você não precisa invocar nada. Diga o que aconteceu e
@@ -223,6 +268,7 @@ Markdown puro, num diretório que é seu:
 ```text
 ~/career-memory/
 ├── profile.md          seu cargo, foco e objetivos
+├── config.json         idioma e comportamento da skill
 ├── entries/            evidências confirmadas, um arquivo por evento
 ├── candidates/         possíveis evidências aguardando sua confirmação (inclusive as do GitHub)
 ├── feedback/           feedbacks recebidos
@@ -247,6 +293,8 @@ vez de improvisados. Você também pode usá-la diretamente:
 ```bash
 CM=skills/career-memory/scripts/career_memory.py
 
+python3 $CM status
+python3 $CM config --set language=pt
 python3 $CM init
 python3 $CM add "Liderei a migração de 4 serviços" --type leadership --project plataforma
 python3 $CM update 2026-08-20-liderei-migracao-4-servicos --add-evidence 'github_pr:#88'

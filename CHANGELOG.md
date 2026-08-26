@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 — 2026-08-26
+
+Every interaction now starts from a known state, and the skill speaks the
+user's language.
+
+- `status` — one idempotent bootstrap that creates the store, subdirectories,
+  `profile.md`, `README.md` and `config.json` when any are missing, then reports
+  the settings and whether the profile is complete. The skill runs it before
+  capturing, retrieving or generating anything, so there is no uninitialised
+  state to handle and no reason to ask permission to set up. `--format json`
+  for programmatic use.
+- `config` — settings that persist in `config.json` in the store: `language`
+  (`auto`/`pt`/`en`), `documents_language` (`same`/`pt`/`en`/`ask`) and
+  `profile_gate` (`documents`/`all`/`remind`). Every value is validated; an
+  unreadable config falls back to defaults with a warning rather than failing.
+- An incomplete `profile.md` gates generated documents by default. Capture,
+  search and dailies are never blocked — evidence mentioned in passing is lost
+  if the skill stops to ask about job titles, while a review written without
+  knowing the user's level reads generic because it is.
+- Language governs replies, entry bodies and documents, never schema values, so
+  a store stays portable across languages.
+- New `/career-config`; `/career-init` now confirms the language settings.
+
 ## 0.3.0 — 2026-08-20
 
 Implements the v0.3 scope of [`docs/SPEC.md`](docs/SPEC.md): proactive memory —
