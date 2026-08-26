@@ -465,5 +465,139 @@ check "gaps works without PyYAML" "No evidence attached" \
 check "checkup works without PyYAML" "Last capture:" \
   env PYTHONPATH="$WORK/noyaml" CAREER_MEMORY_HOME="$WORK/proactive" python3 "$CM" checkup
 
+# --- career intelligence (v0.5) --------------------------------------------
+# Dates are fixed offsets in days, so every entry keeps its distance from the
+# others and from today whatever day the suite runs on.
+export CAREER_MEMORY_HOME="$WORK/intelligence"
+run init >/dev/null
+
+check_status "init creates outputs/trends" 0 test -d "$WORK/intelligence/outputs/trends"
+
+run add "Led the payments gateway migration" --date "$(day 300)" --type leadership \
+  --project payments --tags reliability,migration \
+  --skills "technical leadership,system design" --people Ana \
+  --evidence 'github_pr:#101' --impact "Latency fell from 800ms to 300ms" >/dev/null
+run add "Mentored Ana through her first migration" --date "$(day 200)" \
+  --type leadership --project platform --skills "mentoring,technical leadership" \
+  --people Ana >/dev/null
+run add "Fixed the checkout race condition" --date "$(day 100)" \
+  --type problem-solving --project payments --tags reliability --skills debugging \
+  --evidence 'github_pr:#210' --impact "Intermittent payment failures stopped" >/dev/null
+run add "Designed the ledger architecture" --date "$(day 40)" --type achievement \
+  --project ledger --tags architecture --skills "system design,technical leadership" \
+  --evidence 'document:rfc-ledger' >/dev/null
+run add "Ran the incident post-mortem" --date "$(day 3)" --type leadership \
+  --project payments --tags reliability,incident \
+  --skills "technical leadership,communication" --people Ana,Bruno \
+  --evidence 'document:postmortem' \
+  --impact "Three follow-up actions entered the backlog" >/dev/null
+
+# --- trends ----------------------------------------------------------------
+check "trends counts what the record holds" "5 entries recorded across" run trends
+check "trends reports coverage over the range" "Evidence attached: 4/5" run trends
+check "trends follows a competency across periods" "technical leadership" run trends
+check "trends labels skills as an interpretation" \
+  "skills are the agent's reading of an entry" run trends
+check "trends names recurring impact patterns" "Recurring impact patterns" run trends
+check "trends quotes the impact that was documented" \
+  "Intermittent payment failures stopped" run trends
+check "trends compares the halves of the range" "Earlier half" run trends
+check "trends refuses to read a fade as a decline" \
+  "may have moved, stopped, or simply stopped being written down" run trends
+check "trends suggests a longitudinal output path" "outputs/trends/" run trends
+check "bucket size is selectable" "by quarter" run trends --bucket quarter
+check "project filter narrows the trend" "project: payments" run trends --project payments
+check "an empty range is reported as empty" "Nothing was recorded in this range" \
+  run trends --from 2020-01-01 --to 2020-03-31
+check "an empty range is not read as an idle year" "not about the work" \
+  run trends --from 2020-01-01 --to 2020-03-31
+check "markdown trends is a document" "# Career trends" run trends --format markdown
+check "markdown trends separates the competencies" "## Competency evolution" \
+  run trends --format markdown
+check "markdown trends states what it does not say" "## What this does not say" \
+  run trends --format markdown
+check "markdown trends warns against invention" "Do not add anything" \
+  run trends --format markdown
+check "trends json carries the periods" '"period_labels"' run trends --format json
+check "a single entry is given no trajectory" '"trajectory": ""' run trends --format json
+
+# --- promotion -------------------------------------------------------------
+check "promotion says when there is nothing to measure against" \
+  "No criteria to measure against" run promotion
+check "promotion shows how to record criteria" "## Promotion criteria" run promotion
+
+cat >> "$WORK/intelligence/profile.md" <<'PROFILE'
+
+## Target role
+
+Staff Engineer
+
+## Promotion criteria — Staff Engineer
+
+- Technical leadership: leadership, migration, post-mortem
+- System design: architecture, ledger
+- Mentoring: mentoring
+- Organisational strategy: roadmap, strategy
+PROFILE
+
+check "the target role is read from the profile" "Staff Engineer" run promotion
+check "criteria are read from the profile" "criteria from: profile.md" run promotion
+check "a recurring criterion is named as recorded repeatedly" "Recorded repeatedly" run promotion
+check "a criterion with one entry reads as thin" "Thin in the record" run promotion
+check "an uncovered criterion is named" "Organisational strategy" run promotion
+check "an uncovered criterion is a fact about the record" \
+  "Nothing in the record mentions it" run promotion
+check "coverage is shown across periods" "evidence 3/4" run promotion
+check "a single-project criterion is flagged" "all in one project" run promotion
+check "promotion points at the entries behind a criterion" \
+  "Led the payments gateway migration" run promotion
+check "work outside the ladder is surfaced" "Entries matching no criterion" run promotion
+check "promotion refuses to deliver a verdict" "not a readiness verdict" run promotion
+check_absent "promotion never declares someone ready" "ready for" run promotion
+check "min-entries decides what reads as thin" "Recorded repeatedly (2)" \
+  run promotion --min-entries 2
+check "criteria can be passed directly" "the criteria you passed" \
+  run promotion --criterion "Debugging: race condition"
+check "a passed criterion is matched against the entries" \
+  "Fixed the checkout race condition" run promotion --criterion "Debugging: race condition"
+check "markdown promotion is a document" "# Promotion criteria against the record" \
+  run promotion --format markdown
+check "markdown promotion keeps the disclaimer" "## What this is not" \
+  run promotion --format markdown
+check "promotion json groups by coverage" '"by_status"' run promotion --format json
+
+# --- evidence graph --------------------------------------------------------
+check "the graph connects what entries mention together" "Connections:" run graph
+check "the graph counts entries per node" "technical leadership (skill)" run graph
+check "the graph names what travels together" "Clusters" run graph
+check "the graph explains a missing edge" "never recorded in the same entry" run graph
+check_absent "an edge needs enough shared entries" "Connections:" run graph --min-weight 5
+check "node kinds are selectable" "payments (project)" run graph --nodes project
+check_absent "an unselected kind stays out" "(person)" run graph --nodes project
+check "the graph renders as mermaid" "graph LR" run graph --format mermaid
+check "mermaid edges carry their weight" "---|3|" run graph --format mermaid
+check "graph json carries the edges" '"edges"' run graph --format json
+check_status "an unknown node kind is refused" 1 run graph --nodes nonsense
+
+# --- checkup picks up the criteria -----------------------------------------
+check "checkup reports uncovered ladder criteria" "Ladder criteria for Staff Engineer" \
+  run checkup
+check "checkup counts them" "1 of 4 with nothing recorded" run checkup
+check "checkup points at the detail command" "promotion   # coverage per criterion" \
+  run checkup
+check_absent "competencies alone do not raise a ladder question" "Ladder criteria" \
+  env CAREER_MEMORY_HOME="$WORK/proactive" python3 "$CM" checkup
+
+# The v0.5 commands must survive without PyYAML like everything else.
+check "trends works without PyYAML" "technical leadership" \
+  env PYTHONPATH="$WORK/noyaml" CAREER_MEMORY_HOME="$WORK/intelligence" \
+  python3 "$CM" trends
+check "promotion works without PyYAML" "Recorded repeatedly" \
+  env PYTHONPATH="$WORK/noyaml" CAREER_MEMORY_HOME="$WORK/intelligence" \
+  python3 "$CM" promotion
+check "graph works without PyYAML" "Connections:" \
+  env PYTHONPATH="$WORK/noyaml" CAREER_MEMORY_HOME="$WORK/intelligence" \
+  python3 "$CM" graph
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -23,6 +23,17 @@ and shape generated documents. Update it when your role or goals change.
 
 - <!-- e.g. system design -->
 
+## Target role
+
+<!-- e.g. Staff Engineer — the level a promotion case would be aimed at -->
+
+## Promotion criteria
+
+<!-- Your company's ladder for that level, one bullet per criterion. -->
+<!-- Put the words your entries actually use after a colon, so the criterion -->
+<!-- can be matched against them: -->
+<!-- - Technical leadership: mentoring, migration, RFC -->
+
 ## Review cycle
 
 <!-- e.g. semi-annual, next review 2026-12 -->

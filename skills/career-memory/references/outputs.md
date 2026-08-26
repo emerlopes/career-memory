@@ -10,6 +10,7 @@ Before writing any of them, pull the evidence:
 python3 "$CM" list --window last-quarter --format full
 python3 "$CM" stats --window 6m          # recurring themes, and where evidence is thin
 python3 "$CM" gaps --window last-quarter # what the record cannot prove yet
+python3 "$CM" trends --window 12m        # how those themes moved across periods
 ```
 
 Any weekly or monthly summaries already in `outputs/summaries/` are a shortcut:
@@ -36,9 +37,11 @@ forgotten.
 
 Group by theme (technical impact, delivery, leadership, collaboration,
 learning), most substantial first. Include evidence links inline. Close with
-patterns from `stats` — labelled as observation, e.g. "Cross-team coordination
-appears in 12 entries over the last six months" — and a short list of work the
-user mentioned but never documented.
+patterns from `stats` and `trends` — labelled as observation, e.g. "Cross-team
+coordination appears in 12 entries over three quarters" — and a short list of
+work the user mentioned but never documented. `graph --format mermaid` gives the
+clusters the sections can be organized around, and a figure if the document
+wants one.
 
 ## Performance review
 
@@ -58,8 +61,12 @@ If `profile.md` names the company's ladder or values, organize against those.
 Audience: a skeptical committee. Purpose: show the pattern, not the highlight.
 
 1. Read `profile.md` for the target role.
-2. Retrieve evidence per criterion of that level.
-3. For each criterion: what is demonstrated, which entries show it, how often.
+2. Run `promotion --role "<target>"`: it retrieves the evidence per criterion of
+   that level and sorts the criteria into recorded repeatedly, thin in the
+   record, and nothing in the record mentions it. `references/intelligence.md`
+   covers where the criteria come from and how to record a company ladder.
+3. For each criterion: what is demonstrated, which entries show it, how often,
+   and across how many periods.
 4. Name what is thin or missing, specifically.
 5. Suggest what evidence to collect next.
 
@@ -69,6 +76,9 @@ unless the user explicitly asks your opinion. What helps is:
 > Your record shows repeated cross-team technical leadership — five entries
 > across three quarters. Evidence of organization-level strategy is thinner:
 > two entries, both from the same project.
+
+Those two sentences are exactly what `promotion` computes; the judgement it
+refuses to make is the one the committee is paid to make.
 
 That sentence tells the user what to do next; a verdict does not.
 

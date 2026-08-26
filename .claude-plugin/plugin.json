@@ -1,7 +1,7 @@
 {
   "name": "career-memory",
-  "description": "A persistent, factual memory of your professional work \u2014 captured as plain Markdown and turned into brag documents, performance reviews, promotion cases, resume bullets, interview stories and daily standups.",
-  "version": "0.4.0",
+  "description": "A persistent, factual memory of your professional work — captured as plain Markdown and turned into brag documents, performance reviews, promotion cases, resume bullets, interview stories and daily standups.",
+  "version": "0.5.0",
   "author": {
     "name": "Emerson Lopes",
     "url": "https://github.com/emerlopes"
@@ -20,6 +20,9 @@
     "resume",
     "interview",
     "weekly-summary",
-    "monthly-summary"
+    "monthly-summary",
+    "career-trends",
+    "competency-evolution",
+    "promotion-gap"
   ]
 }

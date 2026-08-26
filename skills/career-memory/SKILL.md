@@ -18,10 +18,15 @@ description: >-
   esse mês". Use it for upkeep of that memory too: weekly and monthly summaries,
   and finding what the record cannot prove — "weekly summary", "monthly
   summary", "what am I missing", "what has no evidence", "resumo semanal",
-  "resumo mensal", "fecha minha semana".
+  "resumo mensal", "fecha minha semana". Use it as well for the longitudinal
+  questions — how their work and competencies evolved, which themes recur, and
+  how the record covers the criteria for a target level: "career trends", "how
+  have I evolved", "what evidence do I have for Staff", "what am I missing for
+  promotion", "evolução de competências", "o que mudou no meu último ano",
+  "o que falta para eu ser promovido".
 license: MIT
 metadata:
-  version: 0.4.0
+  version: 0.5.0
 ---
 
 # Career Memory
@@ -161,6 +166,9 @@ those parts exactly; you do the judgment.
 | A week or a month       | `python3 "$CM" summary --window last-week --format markdown`                    |
 | What is missing         | `python3 "$CM" gaps --window last-quarter`                                      |
 | Upkeep at a glance      | `python3 "$CM" checkup`                                                        |
+| Evolution over time     | `python3 "$CM" trends --window 12m`                                            |
+| Coverage for a level    | `python3 "$CM" promotion --role "Staff Engineer"`                              |
+| What recurs together    | `python3 "$CM" graph --format mermaid`                                         |
 | Schema check            | `python3 "$CM" validate`                                                        |
 | GitHub access check     | `python3 "$CM" github check`                                                    |
 | GitHub activity         | `python3 "$CM" github discover --window 7d`                                     |
@@ -314,6 +322,53 @@ the correct final state for plenty of entries, and it is the whole point.
 
 Full guidance, including when *not* to prompt: `references/proactive.md`.
 
+## Career intelligence
+
+The same entries, read across quarters instead of days. This answers the
+longitudinal questions — how the work evolved, which themes recur, and how the
+record covers the criteria for a target level.
+
+```bash
+python3 "$CM" trends --window 12m                     # periods, competencies, impact patterns
+python3 "$CM" promotion --role "Staff Engineer"       # coverage per criterion, over time
+python3 "$CM" graph --format mermaid                  # what the entries mention together
+```
+
+**`trends`** buckets the record by month, quarter or year: entries and coverage
+per period, each skill's trajectory across them (`steady`, `new`,
+`intermittent`, `paused`), the themes where impact is actually documented, and
+the earlier half of the range against the recent half.
+
+**`promotion`** measures the record against the criteria for a level — read from
+`--criterion`, from a `## Promotion criteria` heading in `profile.md`, or, as a
+labelled fallback, from `## Competencies`. Each criterion lands in one of three
+buckets: recorded repeatedly, thin in the record, or nothing in the record
+mentions it. It also lists the entries that match no criterion at all.
+
+**`graph`** connects the projects, skills, tags and people that entries name
+together, with an edge for every pair that shares two or more entries. Useful
+for the clusters a brag document should be organized around, and for spotting a
+competency that only ever appears next to one project.
+
+Two rules carry this whole section:
+
+- **A fade in the record is not a fade in the work.** "Nothing recorded lately
+  for mentoring" means nothing was recorded. Offer the recovery — `github
+  discover` for that range, or just asking — instead of narrating a decline.
+- **Coverage is not a verdict.** `promotion` reports how the record covers the
+  criteria. Whether the user is ready for the level is a judgement about a
+  person, and it is not yours to hand down in either direction. "Nothing in the
+  record mentions organisational strategy" helps them; "you are not ready for
+  Staff" does not, and may be wrong.
+
+A criterion with nothing recorded is a question before it is a gap: *is this
+missing from the record, or missing from the year?* The two have completely
+different fixes, and only the user knows which it is.
+
+Run these when the question is genuinely longitudinal — a promotion
+conversation, a review cycle, a job search, "how have I evolved" — not on a
+schedule. Full guidance: `references/intelligence.md`.
+
 ## Retrieval
 
 "What did I do this quarter?", "show my payments work", "where have I shown
@@ -333,6 +388,10 @@ Brag document, performance review, promotion case, resume bullets, interview
 stories: all are the same evidence, re-aimed at a different audience. Read
 `references/outputs.md` before writing any of them, and start from the matching
 file in `templates/`.
+
+For anything that spans more than a quarter, run `trends` first — and for a
+promotion case, `promotion` — so the document rests on what the record holds
+over time rather than on the last thing the user mentioned.
 
 Shared rules, in short: pull only from recorded entries; group related evidence;
 lead with what happened, not with adjectives; keep the user's voice; list the

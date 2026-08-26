@@ -945,6 +945,38 @@ Instead:
 
 > "Your recorded evidence shows repeated examples of cross-team technical leadership. I found fewer examples related to organizational-level strategy."
 
+## Implemented in v0.5
+
+The `promotion` command computes that sentence. It takes the criteria for a
+level — from `--criterion`, from a `## Promotion criteria` heading in
+`profile.md`, or, labelled as a fallback, from `## Competencies` — and reports
+per criterion how many entries mention it, across how many periods, with how
+much evidence and documented impact, and what is notable about the shape of it
+(all in one project, nothing in the last six months, no evidence anywhere).
+
+```text
+Recorded repeatedly (1)
+  Technical leadership
+      4 entries across 4 periods   ·   2025-10-14 → 2026-08-12
+
+Thin in the record (2)
+  System design      2 entries across 2 periods
+  Mentoring          1 entry, all in one project (platform)
+
+Nothing in the record mentions it (1)
+  Organisational strategy
+```
+
+The buckets are statements about the record. The command refuses the verdict in
+both directions: it never concludes that the user is ready, and it never
+concludes that they are not. A criterion with nothing recorded is a question —
+missing from the record, or missing from the year? — and the answer belongs to
+the user.
+
+It also reports the entries that match no criterion at all, which is usually a
+vocabulary mismatch between a company ladder and the way people write about
+their own work.
+
 ---
 
 # 32. Resume / CV
@@ -1171,6 +1203,38 @@ Example:
 Pattern detected:
 Cross-team coordination appears in 12 entries over the last 6 months.
 ```
+
+## Implemented in v0.5
+
+Patterns are computed over periods rather than counted in a single window.
+
+```text
+Entries
+    ↓  trends      buckets by month/quarter/year: coverage per period,
+    ↓              each competency's trajectory across them, the themes
+    ↓              where impact was actually documented, first half vs second
+    ↓  promotion   the same evidence against the criteria for a level
+    ↓  graph       what entries mention together (projects, skills, people)
+Observations the user confirms or corrects
+```
+
+Three properties keep this honest:
+
+1. **Trajectories are withheld when the data cannot carry them.** Fewer than
+   three periods, or a single entry, produces no trajectory at all rather than a
+   trend read into one event.
+2. **A fade is a fade in the record.** `paused` means nothing was recorded
+   lately. The output says that, offers `github discover` for the range, and
+   never explains the curve on the user's behalf — an on-call rotation, parental
+   leave and a quiet quarter all produce the same shape.
+3. **Skills stay interpretation.** They were the agent's reading of an entry
+   when they were written; a trajectory built on them is a reading of a reading,
+   and both are labelled wherever they appear.
+
+The evidence graph connects the things entries name — projects, skills, tags,
+people — with an edge for each pair that shares two or more entries. An edge is
+a co-mention and is described as one; that four entries mention Ana and payments
+together is a fact, and what it says about a working relationship is not.
 
 ---
 
@@ -1683,20 +1747,29 @@ Performance Review, Promotion Case, Resume and Interview Stories should be suppo
 - Monthly summary
 - Missing-evidence detection
 
-## v0.4 — Interfaces
+## v0.4 — Bootstrap and language
+
+Shipped ahead of the interfaces below, which need a store that is always in a
+known state and a skill that speaks the user's language.
+
+- One idempotent bootstrap on every interaction
+- Settings that persist in the store: language, document language, profile gate
+- An incomplete profile gates generated documents, never capture
+
+## v0.5 — Career Intelligence
+
+- Career trends (`trends`)
+- competency evolution (`trends`, per period, with trajectories)
+- recurring impact patterns (`trends`, impact coverage per theme)
+- promotion-gap analysis (`promotion`, per criterion, over periods)
+- evidence graphs (`graph`, co-mention of projects, skills, tags, people)
+- longitudinal career summaries (`trends --format markdown`)
+
+## Next — Interfaces
 
 - Telegram
 - CLI
 - additional agent integrations
-
-## v0.5 — Career Intelligence
-
-- Career trends
-- competency evolution
-- recurring impact patterns
-- promotion-gap analysis
-- evidence graphs
-- longitudinal career summaries
 
 ---
 
